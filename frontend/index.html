@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1a0f0f" />
+  <title>cellar27</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <!-- Local config (git-ignored). Copy config.local.example.js → config.local.js. -->
+  <script src="config.local.js"></script>
+  <!-- Supabase JS v2 from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/cellar" class="brand">cellar<span class="num">27</span></a>
+    <nav>
+      <a href="#/cellar"     data-route="cellar">Cellar</a>
+      <a href="#/add"        data-route="add">Add</a>
+      <a href="#/scan"       data-route="scan">Scan</a>
+      <a href="#/pairing"    data-route="pairing">Pair</a>
+      <a href="#/flight"     data-route="flight">Flight</a>
+      <a href="#/drink-now"  data-route="drink-now">Drink&nbsp;now</a>
+    </nav>
+    <span class="userbox">
+      <span id="user-email" class="muted"></span>
+      <button id="signout-btn" class="ghost">Sign out</button>
+    </span>
+  </header>
+
+  <main id="app-view" hidden>
+    <div id="main"></div>
+  </main>
+
+  <section id="auth-view" class="auth-view">
+    <div class="auth-card">
+      <h1>cellar<span class="num">27</span></h1>
+      <p class="muted">Personal cellar. Sign in to continue.</p>
+      <form id="signin-form">
+        <label>Email <input name="email" type="email" autocomplete="email" required /></label>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+        <div class="row">
+          <button type="submit">Sign in</button>
+          <button type="button" id="signup-btn" class="ghost">Sign up</button>
+        </div>
+        <p id="auth-error" class="error"></p>
+      </form>
+    </div>
+  </section>
+
+  <div id="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

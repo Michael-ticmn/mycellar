@@ -1,0 +1,237 @@
+import { getSession, signIn, signUp, signOut, onAuthChange } from './auth.js';
+import { listBottles, createBottle, deleteBottle, pourBottle, undoPour } from './bottles.js';
+import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
+
+const STYLES = [
+  'light_red','medium_red','full_red',
+  'light_white','full_white',
+  'rose','sparkling','dessert','fortified',
+];
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+// ── Routing (hash-based) ──────────────────────────────────────────
+const ROUTES = ['cellar', 'add', 'pairing', 'flight', 'drink-now', 'scan'];
+function currentRoute() {
+  const h = location.hash.replace(/^#\/?/, '');
+  return ROUTES.includes(h) ? h : 'cellar';
+}
+async function loadView(name) {
+  const res = await fetch(`views/${name}.html`);
+  return res.ok ? res.text() : `<p>View not found: ${name}</p>`;
+}
+
+async function render() {
+  const session = await getSession();
+  if (!session) {
+    renderAuth();
+    return;
+  }
+  $('#auth-view').hidden = true;
+  $('#app-view').hidden = false;
+  $('#user-email').textContent = session.user.email;
+
+  const route = currentRoute();
+  $$('nav a').forEach((a) => {
+    a.classList.toggle('active', a.dataset.route === route);
+  });
+
+  $('#main').innerHTML = await loadView(route);
+  await mountView(route);
+}
+
+async function mountView(route) {
+  switch (route) {
+    case 'cellar':     return mountCellar();
+    case 'add':        return mountAddBottle();
+    case 'drink-now':  return mountDrinkNow();
+    case 'pairing':
+    case 'flight':
+    case 'scan':       return; // placeholders — static markup only
+  }
+}
+
+// ── Cellar grid ───────────────────────────────────────────────────
+async function mountCellar() {
+  const grid = $('#cellar-grid');
+  if (!grid) return;
+  grid.innerHTML = '<p class="muted">Loading…</p>';
+  let bottles;
+  try { bottles = await listBottles(); }
+  catch (e) { grid.innerHTML = `<p class="error">${e.message}</p>`; return; }
+  if (!bottles.length) {
+    grid.innerHTML = '<p class="muted">Empty cellar. <a href="#/add">Add your first bottle →</a></p>';
+    return;
+  }
+  grid.innerHTML = bottles.map(bottleCardHTML).join('');
+  $$('[data-pour]', grid).forEach((btn) => btn.addEventListener('click', onPour));
+  $$('[data-delete]', grid).forEach((btn) => btn.addEventListener('click', onDelete));
+}
+
+function bottleCardHTML(b) {
+  const window = (b.drink_window_start && b.drink_window_end)
+    ? `${b.drink_window_start}–${b.drink_window_end}`
+    : '—';
+  return `
+    <article class="bottle-card">
+      <div class="bottle-photo placeholder">${escapeHtml(b.producer[0] || '?')}</div>
+      <div class="bottle-meta">
+        <h3>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
+        <p class="muted">
+          ${escapeHtml(b.varietal)}${b.vintage ? ` · ${b.vintage}` : ''}
+          ${b.region ? ` · ${escapeHtml(b.region)}` : ''}
+        </p>
+        <p class="meta-row">
+          <span class="qty">×${b.quantity}</span>
+          <span class="window">drink ${window}</span>
+        </p>
+        <div class="actions">
+          <button data-pour="${b.id}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
+          <button data-delete="${b.id}" class="ghost">Delete</button>
+        </div>
+      </div>
+    </article>`;
+}
+
+async function onPour(e) {
+  const id = e.currentTarget.dataset.pour;
+  try {
+    await pourBottle(id);
+    showToast('Poured. Undo?', { actionLabel: 'Undo', onAction: () => undoPour(id).then(render) });
+    render();
+  } catch (err) { alert(err.message); }
+}
+async function onDelete(e) {
+  const id = e.currentTarget.dataset.delete;
+  if (!confirm('Delete this bottle?')) return;
+  try { await deleteBottle(id); render(); }
+  catch (err) { alert(err.message); }
+}
+
+// ── Add bottle (manual) ───────────────────────────────────────────
+function mountAddBottle() {
+  const form = $('#add-bottle-form');
+  if (!form) return;
+
+  // Populate varietal datalist + style select
+  const dl = $('#varietal-options');
+  if (dl) dl.innerHTML = VARIETAL_NAMES.map((v) => `<option value="${v}">`).join('');
+  const styleSel = form.style;
+  if (styleSel) styleSel.innerHTML = STYLES.map((s) => `<option value="${s}">${s}</option>`).join('');
+
+  // Live drink-window suggestion
+  const updateWindowHint = () => {
+    const v = form.varietal.value;
+    const s = form.style.value;
+    const yr = parseInt(form.vintage.value, 10);
+    if (!yr) { $('#window-hint').textContent = ''; return; }
+    const { start, end } = suggestDrinkWindow({ varietal: v, style: s, vintage: yr });
+    $('#window-hint').textContent = (start && end)
+      ? `Auto: ${start}–${end} (override below if you disagree)`
+      : 'No window suggestion for this varietal/style';
+    if (start && !form.drink_window_start.value) form.drink_window_start.placeholder = start;
+    if (end && !form.drink_window_end.value) form.drink_window_end.placeholder = end;
+  };
+  ['varietal','style','vintage'].forEach((n) => form[n].addEventListener('input', updateWindowHint));
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const input = {
+      producer: fd.get('producer').trim(),
+      wine_name: fd.get('wine_name')?.trim() || null,
+      varietal: fd.get('varietal').trim(),
+      vintage: numOrNull(fd.get('vintage')),
+      region: fd.get('region')?.trim() || null,
+      country: fd.get('country')?.trim() || null,
+      style: fd.get('style'),
+      sweetness: fd.get('sweetness') || null,
+      body: numOrNull(fd.get('body')),
+      quantity: numOrNull(fd.get('quantity')) ?? 1,
+      storage_location: fd.get('storage_location')?.trim() || null,
+      acquired_date: fd.get('acquired_date') || null,
+      acquired_price: numOrNull(fd.get('acquired_price')),
+      drink_window_start: numOrNull(fd.get('drink_window_start')),
+      drink_window_end: numOrNull(fd.get('drink_window_end')),
+      notes: fd.get('notes')?.trim() || null,
+    };
+    try {
+      await createBottle(input);
+      location.hash = '#/cellar';
+    } catch (err) { alert(err.message); }
+  });
+}
+
+// ── Drink-now ─────────────────────────────────────────────────────
+async function mountDrinkNow() {
+  const root = $('#drink-now-list');
+  if (!root) return;
+  const yr = new Date().getFullYear();
+  let bottles;
+  try { bottles = await listBottles(); }
+  catch (e) { root.innerHTML = `<p class="error">${e.message}</p>`; return; }
+  const buckets = { past: [], peak: [], entering: [] };
+  for (const b of bottles) {
+    if (b.drink_window_start == null || b.drink_window_end == null) continue;
+    if (yr > b.drink_window_end) buckets.past.push(b);
+    else if (yr >= b.drink_window_start) buckets.peak.push(b);
+    else if (yr === b.drink_window_start - 1) buckets.entering.push(b);
+  }
+  const section = (title, list) => list.length
+    ? `<section><h2>${title}</h2><div class="grid">${list.map(bottleCardHTML).join('')}</div></section>` : '';
+  root.innerHTML = [
+    section('Past peak — drink soon', buckets.past),
+    section('In peak window', buckets.peak),
+    section('Entering peak this year', buckets.entering),
+  ].join('') || '<p class="muted">Nothing to flag right now.</p>';
+}
+
+// ── Auth view ─────────────────────────────────────────────────────
+function renderAuth() {
+  $('#auth-view').hidden = false;
+  $('#app-view').hidden = true;
+}
+function wireAuth() {
+  $('#signin-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try { await signIn(fd.get('email'), fd.get('password')); }
+    catch (err) { $('#auth-error').textContent = err.message; }
+  });
+  $('#signup-btn').addEventListener('click', async () => {
+    const email = $('#signin-form').email.value;
+    const pw    = $('#signin-form').password.value;
+    if (!email || !pw) { $('#auth-error').textContent = 'Email + password required to sign up.'; return; }
+    try { await signUp(email, pw); }
+    catch (err) { $('#auth-error').textContent = err.message; }
+  });
+  $('#signout-btn').addEventListener('click', () => signOut());
+}
+
+// ── Toast ─────────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg, { actionLabel, onAction } = {}) {
+  const t = $('#toast');
+  t.innerHTML = `<span>${escapeHtml(msg)}</span>${actionLabel ? `<button id="toast-action">${actionLabel}</button>` : ''}`;
+  t.hidden = false;
+  if (actionLabel) $('#toast-action').addEventListener('click', () => { onAction?.(); t.hidden = true; });
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────
+function numOrNull(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ── Bootstrap ─────────────────────────────────────────────────────
+window.addEventListener('hashchange', render);
+onAuthChange(() => render());
+wireAuth();
+render();
