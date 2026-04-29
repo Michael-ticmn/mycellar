@@ -101,7 +101,7 @@ async function onPour(e) {
   const id = e.currentTarget.dataset.pour;
   try {
     await pourBottle(id);
-    showToast('Poured. Undo?', { actionLabel: 'Undo', onAction: () => undoPour(id).then(render) });
+    showToast('Poured. Undo?', { actionLabel: 'Undo', onAction: () => undoPour(id).then(() => render()) });
     render();
   } catch (err) { alert(err.message); }
 }
