@@ -62,7 +62,6 @@ a:hover { text-decoration: underline; }
 .topbar nav a.active { background: var(--accent); color: var(--text); }
 .userbox { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
 .userbox #user-email { font-size: 0.85rem; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.userbox #version-tag { font-size: 0.7rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
 
 /* Main */
 main { max-width: var(--maxw); margin: 0 auto; padding: 1.25rem 1rem 4rem; }

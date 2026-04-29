@@ -351,10 +351,6 @@ onAuthChange((session) => setTimeout(() => render(session), 0));
 wireAuth();
 render();
 
-// Render version tag in topbar (shown in both auth + signed-in views).
-const versionTag = document.getElementById('version-tag');
-if (versionTag && self.CELLAR_VERSION) versionTag.textContent = `v${self.CELLAR_VERSION}`;
-
 // PWA service worker registration + auto-update.
 //
 // Mechanism: bumping docs/version.js changes sw.js bytes (via importScripts),
