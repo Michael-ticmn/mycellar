@@ -1,5 +1,15 @@
 <section>
   <h1>Drink now</h1>
-  <p class="muted">Bottles entering, in, or past their peak window for the current year.</p>
+  <p class="muted">Local view: bottles entering, in, or past their peak window for the current year.</p>
   <div id="drink-now-list"></div>
+
+  <hr style="border-color: var(--surface-2); margin: 2rem 0;" />
+
+  <h2>Ask the bridge</h2>
+  <p class="muted">Get 1–3 picks from Claude that consider quantity, peak, and what you've recently drunk.</p>
+  <form id="drink-now-form">
+    <label>Notes (optional)<input name="notes" placeholder="e.g. quiet evening, want something thoughtful" /></label>
+    <button type="submit">Suggest tonight's bottle</button>
+  </form>
+  <div id="drink-now-result"></div>
 </section>

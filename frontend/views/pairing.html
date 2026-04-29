@@ -1,4 +1,21 @@
-<section class="placeholder-view">
-  <h2>Pairing</h2>
-  <p>"What should I open with X?" — routed through the Claude Code bridge in <strong>Phase 2</strong>.</p>
+<section>
+  <h1>Pairing</h1>
+  <p class="muted">Describe the dish and the table; the bridge picks 1–2 bottles from your cellar.</p>
+  <form id="pairing-form">
+    <label>Dish<textarea name="dish" rows="2" placeholder="e.g. seared duck breast with cherry reduction" required></textarea></label>
+    <div class="row">
+      <label style="flex:1">Guests<input name="guests" type="number" min="1" value="2" /></label>
+      <label style="flex:1">Occasion
+        <select name="occasion">
+          <option value="weeknight">weeknight</option>
+          <option value="dinner_party">dinner party</option>
+          <option value="celebration">celebration</option>
+          <option value="casual">casual</option>
+        </select>
+      </label>
+    </div>
+    <label>Constraints (optional)<input name="constraints" placeholder="e.g. avoid heavy reds, save the Burgundy" /></label>
+    <button type="submit">Get pairing</button>
+  </form>
+  <div id="pairing-result"></div>
 </section>

@@ -1,4 +1,26 @@
-<section class="placeholder-view">
-  <h2>Flight builder</h2>
-  <p>Tasting flight builder — routed through the Claude Code bridge in <strong>Phase 2</strong>.</p>
+<section>
+  <h1>Flight builder</h1>
+  <p class="muted">Tell the bridge a theme; it'll order 3–5 bottles into a teaching flight.</p>
+  <form id="flight-form">
+    <label>Theme
+      <select name="theme">
+        <option value="vertical">Vertical (same wine, different vintages)</option>
+        <option value="horizontal">Horizontal (same vintage, different producers)</option>
+        <option value="varietal_comparison">Varietal comparison</option>
+        <option value="regional_tour">Regional tour</option>
+        <option value="surprise_me">Surprise me</option>
+      </select>
+    </label>
+    <div class="row">
+      <label style="flex:1">Guests<input name="guests" type="number" min="1" value="4" /></label>
+      <label style="flex:1">Length
+        <select name="length">
+          <option value="3">3 bottles</option>
+          <option value="5">5 bottles</option>
+        </select>
+      </label>
+    </div>
+    <button type="submit">Build flight</button>
+  </form>
+  <div id="flight-result"></div>
 </section>

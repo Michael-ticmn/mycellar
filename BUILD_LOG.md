@@ -66,3 +66,49 @@ These are educated guesses from secondary sources; please validate or correct:
 
 ### Expected next
 Chat reviews this entry → confirms palette, image params, varietal flags → Code commits + (optionally) pushes → CURRENT_STATE flips back to Code for Phase 2 (the watcher).
+
+---
+
+## 2026-04-28 — Phase 1 verified live + auth UX fixes
+
+After Michael created the Supabase project (`mycellar`, ref `fksvvymeqvohyaestupo`), applied `0001_init.sql`, and set local config, sign-in/sign-up + add-bottle round-tripped successfully.
+
+Fixed three bugs that surfaced during the live walkthrough:
+1. **`[hidden]` attribute was being overridden** by `display: grid` on `.auth-view` — sign-in card stayed visible after login. Added `[hidden] { display: none !important; }`.
+2. **Topbar was overflowing** — brand wordmark got covered by the active nav button. Added `flex-shrink: 0` to brand and `max-width + ellipsis` to the email display.
+3. **Supabase v2 deadlock**: `onAuthStateChange` callback was calling `getSession()`, which tries to acquire the same lock `signInWithPassword` holds, causing sign-in to hang forever. Fix: pass session through from the callback instead of re-fetching, and defer the render to next tick via `setTimeout`. Also call `render()` directly after `signIn()` returns rather than depending solely on the listener.
+4. Renamed `views/add-bottle.html` → `views/add.html` to match the route name.
+
+---
+
+## 2026-04-28 — Phase 2 landed: bridge watcher + pairing/flight/drink-now wiring
+
+### Built — watcher (`watcher/`)
+
+Node 20+ ES-module service. Single process, ~250 LOC.
+
+- **[`src/index.js`](watcher/src/index.js)** — main loop. Subscribes to Postgres INSERT events on `pairing_requests` and `scan_requests`. Atomically claims pending rows (`status='pending' → 'picked_up'`) so a duplicate event can't double-process. Renders the request markdown into `<bridge>/requests/<file>.md`. For scans, downloads the label image from Supabase Storage to `<bridge>/images/<uuid>.<ext>` first.
+- **chokidar** watches `<bridge>/responses/`. On any new `req-*.md` or `scan-*.md`: parses it, inserts into the matching `*_responses` table, marks the request `completed`, archives both files into `<bridge>/processed/`. Local image is deleted (Storage holds the durable copy).
+- **Catch-up sweep on startup** picks up rows queued while the watcher was down.
+- **Timeout sweep** runs every 60s — anything stuck `picked_up` for >`TIMEOUT_MINUTES` (default 10) flips to `status='error'` with a descriptive message.
+- **[`src/render.js`](watcher/src/render.js)** — produces the markdown request files per BUILD_SPEC §2.2 / §2.2b. Cellar table is rendered with id + producer + wine + varietal + vintage + style + qty + drink window for pairing requests; without drink window for scan/pour requests.
+- **[`src/parse.js`](watcher/src/parse.js)** — tolerant parser for Claude's response files. Handles frontmatter + ## sections + bullet/YAML-ish recommendation blocks. Extracts `bottle_id`, `confidence`, `reasoning`, `alternatives` for pairing; `extracted` scalars + `matched_bottle_id` + `match_candidates` for scan.
+
+### Built — frontend bridge round-trip
+
+- **[`frontend/js/pairings.js`](frontend/js/pairings.js)** — replaces the Phase 1 stubs. Snapshots the cellar (stripping `acquired_price` per STRATEGY constraint) into the request row, then opens a Realtime subscription on `pairing_responses` filtered by `request_id`. Also subscribes to UPDATE on the request itself to surface `status='error'` with `error_message`. Race-safe: after `SUBSCRIBED`, re-checks for an already-arrived response.
+- **[`pairing.html`](frontend/views/pairing.html)** — dish + guests + occasion + constraints form
+- **[`flight.html`](frontend/views/flight.html)** — theme + guests + length form
+- **[`drink-now.html`](frontend/views/drink-now.html)** — keeps the local bucketed view, adds an "Ask the bridge" form below for AI-driven 1–3 picks
+- **[`app.js`](frontend/js/app.js)** — three new mount handlers + a shared `renderRecommendations()` that renders bottle cards (resolving `bottle_id` against the live cellar so the data is fresh, not stale from snapshot) plus narrative markdown (minimal inline parser).
+
+### Operational notes / things Michael needs to do
+
+- **Realtime publication**: in Supabase dashboard → Database → Replication → ensure `pairing_requests`, `scan_requests`, `pairing_responses`, `scan_responses` are enabled for the `supabase_realtime` publication. Not enabled by default. Without this, the watcher subscribes successfully but never receives events.
+- **Service role key**: paste into `watcher/.env` (NEVER into the frontend). Settings → API in the Supabase dashboard.
+- **Run the watcher on the VM**: see `watcher/README.md` — `npm install`, `npm start`. Recommended PM2.
+- **Run Claude Code on the same VM**: with the prompt documented in `watcher/README.md`. Working dir = `<BRIDGE_DIR>` so it sees the `requests/` folder.
+- **Scan flow remains stubbed** — that's Phase 3 (`getUserMedia` + camera UX + Storage upload). The watcher and schema are scan-ready though, so Phase 3 is purely frontend.
+
+### Expected next
+Michael: deploy the watcher to the VM, enable Realtime publications, launch Claude Code with the bridge prompt, then do an end-to-end smoke test by submitting a pairing request from the frontend. Then either Phase 3 (scan UX) or polish (tasting log, mobile pass).

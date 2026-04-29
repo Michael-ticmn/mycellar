@@ -1,6 +1,7 @@
 import { getSession, signIn, signUp, signOut, onAuthChange } from './auth.js';
-import { listBottles, createBottle, deleteBottle, pourBottle, undoPour } from './bottles.js';
+import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle } from './bottles.js';
 import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
+import { requestPairing, requestFlight, requestDrinkNow } from './pairings.js';
 
 const STYLES = [
   'light_red','medium_red','full_red',
@@ -48,9 +49,9 @@ async function mountView(route) {
     case 'cellar':     return mountCellar();
     case 'add':        return mountAddBottle();
     case 'drink-now':  return mountDrinkNow();
-    case 'pairing':
-    case 'flight':
-    case 'scan':       return; // placeholders — static markup only
+    case 'pairing':    return mountPairing();
+    case 'flight':     return mountFlight();
+    case 'scan':       return; // placeholder — Phase 3
   }
 }
 
@@ -165,8 +166,105 @@ function mountAddBottle() {
   });
 }
 
+// ── Bridge requests (pairing / flight / drink-now suggestions) ────
+function setBusy(resultEl, msg) {
+  resultEl.innerHTML = `<p class="muted">${escapeHtml(msg)}</p>`;
+}
+async function renderRecommendations(resultEl, response) {
+  const recs = Array.isArray(response.recommendations) ? response.recommendations : [];
+  const cards = await Promise.all(recs.map(async (r) => {
+    let bottle = null;
+    try { bottle = await getBottle(r.bottle_id); } catch { /* unknown id */ }
+    if (!bottle) {
+      return `<article class="bottle-card"><div class="bottle-meta">
+        <h3 class="muted">Unknown bottle</h3>
+        <p class="muted">id: ${escapeHtml(r.bottle_id)}</p>
+        <p>${escapeHtml(r.reasoning || '')}</p>
+      </div></article>`;
+    }
+    return `<article class="bottle-card">
+      <div class="bottle-photo placeholder">${escapeHtml((bottle.producer || '?')[0])}</div>
+      <div class="bottle-meta">
+        <h3>${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}</h3>
+        <p class="muted">${escapeHtml(bottle.varietal)}${bottle.vintage ? ` · ${bottle.vintage}` : ''}</p>
+        <p><span class="qty">${escapeHtml(r.confidence || 'medium')}</span> · ${escapeHtml(r.reasoning || '')}</p>
+      </div>
+    </article>`;
+  }));
+  const narrative = response.narrative
+    ? `<section><h2>Narrative</h2><div class="narrative">${markdownLite(response.narrative)}</div></section>`
+    : '';
+  resultEl.innerHTML = `
+    <section>
+      <h2>Picks</h2>
+      <div class="grid">${cards.join('') || '<p class="muted">(no recommendations)</p>'}</div>
+    </section>
+    ${narrative}`;
+}
+
+// Minimal markdown — paragraphs + bold/italic. Avoid pulling in a parser.
+function markdownLite(md) {
+  const escaped = escapeHtml(md);
+  const inline = escaped
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|\W)\*(.+?)\*(?=\W|$)/g, '$1<em>$2</em>');
+  return inline.split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+}
+
+function mountPairing() {
+  const form = $('#pairing-form');
+  const result = $('#pairing-result');
+  if (!form) return;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    setBusy(result, 'Asking the bridge… (Claude on the VM picks this up; up to a couple of minutes)');
+    try {
+      const { response } = await requestPairing({
+        dish: fd.get('dish').trim(),
+        guests: numOrNull(fd.get('guests')) ?? 2,
+        occasion: fd.get('occasion'),
+        constraints: fd.get('constraints')?.trim() || null,
+      });
+      await renderRecommendations(result, response);
+    } catch (err) { result.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+  });
+}
+
+function mountFlight() {
+  const form = $('#flight-form');
+  const result = $('#flight-result');
+  if (!form) return;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    setBusy(result, 'Building the flight… (this may take a couple of minutes)');
+    try {
+      const { response } = await requestFlight({
+        theme: fd.get('theme'),
+        guests: numOrNull(fd.get('guests')) ?? 4,
+        length: numOrNull(fd.get('length')) ?? 3,
+      });
+      await renderRecommendations(result, response);
+    } catch (err) { result.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+  });
+}
+
 // ── Drink-now ─────────────────────────────────────────────────────
 async function mountDrinkNow() {
+  const dnForm = $('#drink-now-form');
+  const dnResult = $('#drink-now-result');
+  if (dnForm) {
+    dnForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(dnForm);
+      setBusy(dnResult, 'Asking the bridge…');
+      try {
+        const { response } = await requestDrinkNow({ notes: fd.get('notes')?.trim() || null });
+        await renderRecommendations(dnResult, response);
+      } catch (err) { dnResult.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+    });
+  }
   const root = $('#drink-now-list');
   if (!root) return;
   const yr = new Date().getFullYear();

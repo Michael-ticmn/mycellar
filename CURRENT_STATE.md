@@ -1,22 +1,22 @@
 # cellar27 — CURRENT_STATE.md
 
-## As of 2026-04-28 (post Phase 1 scaffold)
+## As of 2026-04-28 (post Phase 2 build)
 
 **What exists and works:**
-- Repo monorepo layout: `frontend/`, `watcher/`, `supabase/migrations/`, planning docs at root.
-- Supabase migration `0001_init.sql` ready to apply (5 tables, RLS, Storage bucket + policies, updated_at trigger).
-- Frontend skeleton: index.html shell, hash router, email/password auth gate, cellar grid, manual add-bottle form with live drink-window suggestion, drink-now bucketed view, tap-to-pour with undo toast. No build step. Loads Supabase JS v2 from CDN.
-- Varietal-window lookup with 35+ entries plus style-based fallback.
-- Burgundy/oxblood palette applied per BUILD_SPEC §1.3 (with two extra shades — see BUILD_LOG entry).
+- Phase 1: schema applied to live Supabase project, frontend skeleton verified end-to-end (sign-in, add bottle, drink-window auto-fill).
+- Phase 2: bridge watcher service written ([`watcher/`](watcher/)) — Node 20 + chokidar + Supabase service role. Subscribes to pairing/scan requests, renders markdown into `<bridge>/requests/`, watches `<bridge>/responses/`, ingests results, archives. Catch-up sweep + 10-minute timeout sweep.
+- Phase 2: frontend pairing/flight/drink-now flows wired against Supabase Realtime ([`frontend/js/pairings.js`](frontend/js/pairings.js)). Cellar snapshot stripped of `acquired_price` per STRATEGY. Recommendations rendered as bottle cards + narrative.
 
-**What's in progress:** Phase 1 confirmed by Chat (palette, image params, varietal entries all signed off). Pushed to `origin/main`. Next blocker is Michael creating the Supabase project + filling `frontend/config.local.js` so the app can run live.
+**What's in progress:** Phase 2 has not yet been run end-to-end live. Watcher is built but not deployed to the VM; Claude Code on the VM hasn't been started with the bridge prompt; Realtime publication may not yet be enabled in Supabase.
 
 **What's broken / incomplete:**
-- Frontend can't run live until Michael creates the Supabase project and fills `frontend/config.local.js`.
-- Pairing/flight/scan flows are stub views only — those land in Phase 2 / Phase 3.
-- Camera (`getUserMedia`) UX deferred to Phase 3.
-- Nothing pushed to GH Pages yet (explicitly forbidden until palette is confirmed).
+- Scan flow (camera capture + Storage upload) — Phase 3.
+- Tasting log, mobile-specific pass, sharing flights — Phase 4 polish.
 
-**Immediate next action:** Michael creates the Supabase project, applies `supabase/migrations/0001_init.sql` in the SQL editor, copies `frontend/config.local.example.js` → `frontend/config.local.js` and pastes URL + anon key. Then sanity-check the app via `python -m http.server 8000` in `frontend/`.
+**Immediate next action:** Michael — deploy the watcher (see [`watcher/README.md`](watcher/README.md)):
+1. In Supabase dashboard → Database → Replication → enable `pairing_requests`, `pairing_responses`, `scan_requests`, `scan_responses` for the `supabase_realtime` publication.
+2. On the win11 VM: clone the repo, `cd watcher && npm install`, copy `.env.example` to `.env`, paste in `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, `npm start` (or PM2).
+3. On the same VM: launch Claude Code in `<BRIDGE_DIR>` with the prompt documented in `watcher/README.md`.
+4. From the frontend, submit a pairing request and confirm it round-trips.
 
-**Which surface should act next:** Michael (Supabase setup), then Code (Phase 2 — the watcher)
+**Which surface should act next:** Michael (deploy + smoke test), then Code (Phase 3 scan flow) once round-trip works.

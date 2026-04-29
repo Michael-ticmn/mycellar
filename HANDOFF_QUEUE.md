@@ -2,9 +2,12 @@
 
 ## Pending
 
-- [ ] [FROM: Code → Michael] **Create the Supabase project** (`cellar27`), apply `supabase/migrations/0001_init.sql` in the SQL editor, then `cp frontend/config.local.example.js frontend/config.local.js` and paste in `SUPABASE_URL` + anon key. After that, frontend runs locally via `python -m http.server 8000` in `frontend/`.
-- [ ] [FROM: Chat → Code, post-Supabase setup] Begin **Phase 2 — the watcher** ([BUILD_SPEC.md §2](BUILD_SPEC.md)).
-- [ ] [FROM: Chat → Code, in Phase 3] Test `getUserMedia` UX on iOS Safari (rear-camera selection + permission flow) before claiming the scan view is done.
+- [ ] [FROM: Code → Michael] **Enable Realtime** in Supabase dashboard → Database → Replication → `supabase_realtime` publication for `pairing_requests`, `pairing_responses`, `scan_requests`, `scan_responses`. Without this the watcher never receives events.
+- [ ] [FROM: Code → Michael] **Deploy the watcher** to the win11 VM. See [watcher/README.md](watcher/README.md). Need `SUPABASE_SERVICE_ROLE_KEY` from Settings → API.
+- [ ] [FROM: Code → Michael] **Launch Claude Code on the VM** in `<BRIDGE_DIR>` with the bridge prompt documented in [watcher/README.md](watcher/README.md).
+- [ ] [FROM: Code → Michael] **End-to-end smoke test**: submit a pairing request from the frontend, confirm a recommendation comes back.
+- [ ] [FROM: Chat → Code, post-smoke-test] Begin **Phase 3 — scan flow** (camera capture, Storage upload, scan_request round-trip, post-scan review form).
+- [ ] [FROM: Chat → Code, in Phase 3] Test `getUserMedia` UX on iOS Safari (rear-camera selection + permission flow).
 
 ## Completed
 
@@ -14,3 +17,5 @@
 - [x] [Chat → Code, 2026-04-28] Decide image size/format on upload (1600px long edge, JPEG q=0.85) — confirmed by Chat
 - [x] [Chat → Code, 2026-04-28] After Phase 1 ships, append BUILD_LOG entry and flip CURRENT_STATE to "Chat"
 - [x] [Chat → Code, 2026-04-28] Push Phase 1 commits to `origin/main`
+- [x] [Michael, 2026-04-28] Create Supabase project, apply `0001_init.sql`, paste keys into `frontend/config.local.js`
+- [x] [Code, 2026-04-28] Phase 2 — bridge watcher service (`watcher/`) and frontend pairing/flight/drink-now wiring
