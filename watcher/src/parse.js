@@ -15,11 +15,24 @@ function splitFrontmatter(text) {
 }
 
 // Extract a section by ## heading. Returns text between this heading
-// and the next ## (or EOF), trimmed.
+// and the next ## (or end of body), trimmed.
+//
+// (Earlier version used a regex with `\Z` for end-of-string — that's a
+// PCRE thing; in JavaScript regex `\Z` is literal "Z", which made the
+// last section in a response fail to close.)
 function section(body, heading) {
-  const re = new RegExp(`^##\\s+${heading}\\b[^\\n]*\\n([\\s\\S]*?)(?=^##\\s|\\Z)`, 'mi');
-  const m = body.match(re);
-  return m ? m[1].trim() : '';
+  const lines = body.split('\n');
+  const startRe = new RegExp(`^##\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (startRe.test(lines[i])) { start = i + 1; break; }
+  }
+  if (start === -1) return '';
+  let end = lines.length;
+  for (let i = start; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i])) { end = i; break; }
+  }
+  return lines.slice(start, end).join('\n').trim();
 }
 
 // Pull the first ```json ... ``` fenced block out of a section. Returns
