@@ -60,7 +60,7 @@ These are educated guesses from secondary sources; please validate or correct:
 - **Ice Wine / Late Harvest** — `[2,15]` peak `[4,10]`
 
 ### Blockers / next actions
-- **Supabase project not yet created.** Frontend can't run live until Michael creates the project, runs `0001_init.sql`, and pastes URL + anon key into `frontend/config.local.js` (copied from `config.local.example.js`).
+- **Supabase project not yet created.** Frontend can't run live until owner creates the project, runs `0001_init.sql`, and pastes URL + anon key into `frontend/config.local.js` (copied from `config.local.example.js`).
 - **No `git push` yet.** Per STRATEGY constraint: do not push frontend until palette confirmed. Commits staged locally; awaiting Chat sign-off on the proposals above.
 - **iOS Safari `getUserMedia` test** (HANDOFF_QUEUE item 4) — deferred to Phase 3 when scan UI is wired up; nothing camera-related in Phase 1.
 
@@ -71,7 +71,7 @@ Chat reviews this entry → confirms palette, image params, varietal flags → C
 
 ## 2026-04-28 — Phase 1 verified live + auth UX fixes
 
-After Michael created the Supabase project (`mycellar`, ref `fksvvymeqvohyaestupo`), applied `0001_init.sql`, and set local config, sign-in/sign-up + add-bottle round-tripped successfully.
+After owner created the Supabase project (`mycellar`, ref `fksvvymeqvohyaestupo`), applied `0001_init.sql`, and set local config, sign-in/sign-up + add-bottle round-tripped successfully.
 
 Fixed three bugs that surfaced during the live walkthrough:
 1. **`[hidden]` attribute was being overridden** by `display: grid` on `.auth-view` — sign-in card stayed visible after login. Added `[hidden] { display: none !important; }`.
@@ -102,7 +102,7 @@ Node 20+ ES-module service. Single process, ~250 LOC.
 - **[`drink-now.html`](frontend/views/drink-now.html)** — keeps the local bucketed view, adds an "Ask the bridge" form below for AI-driven 1–3 picks
 - **[`app.js`](frontend/js/app.js)** — three new mount handlers + a shared `renderRecommendations()` that renders bottle cards (resolving `bottle_id` against the live cellar so the data is fresh, not stale from snapshot) plus narrative markdown (minimal inline parser).
 
-### Operational notes / things Michael needs to do
+### Operational notes / things owner needs to do
 
 - **Realtime publication**: in Supabase dashboard → Database → Replication → ensure `pairing_requests`, `scan_requests`, `pairing_responses`, `scan_responses` are enabled for the `supabase_realtime` publication. Not enabled by default. Without this, the watcher subscribes successfully but never receives events.
 - **Service role key**: paste into `watcher/.env` (NEVER into the frontend). Settings → API in the Supabase dashboard.
@@ -111,7 +111,7 @@ Node 20+ ES-module service. Single process, ~250 LOC.
 - **Scan flow remains stubbed** — that's Phase 3 (`getUserMedia` + camera UX + Storage upload). The watcher and schema are scan-ready though, so Phase 3 is purely frontend.
 
 ### Expected next
-Michael: deploy the watcher to the VM, enable Realtime publications, launch Claude Code with the bridge prompt, then do an end-to-end smoke test by submitting a pairing request from the frontend. Then either Phase 3 (scan UX) or polish (tasting log, mobile pass).
+owner: deploy the watcher to the VM, enable Realtime publications, launch Claude Code with the bridge prompt, then do an end-to-end smoke test by submitting a pairing request from the frontend. Then either Phase 3 (scan UX) or polish (tasting log, mobile pass).
 
 ---
 
@@ -148,7 +148,7 @@ Concern: deploying to GH Pages exposes a public URL. Anyone could sign up → su
 
 ### Layers
 
-1. **Disable open sign-ups in Supabase** (Auth → Sign In / Providers → "Allow new users to sign up" OFF). Single-user system anyway. Done by Michael.
+1. **Disable open sign-ups in Supabase** (Auth → Sign In / Providers → "Allow new users to sign up" OFF). Single-user system anyway. Done by owner.
 2. **Watcher allowlist** ([`watcher/src/policy.js`](watcher/src/policy.js)): `ALLOWED_USER_IDS` env var, comma-separated UUIDs. Empty = open mode. Non-allowlisted requests get marked `status='error'` immediately, no `claude` spawn.
 3. **Per-user rate limit** in the same module: max 20 requests/hour, sliding-window in-memory counter. Caps blast radius if an account is compromised.
 4. **DB-layer CHECK constraints** ([`supabase/migrations/0002_lockdown.sql`](supabase/migrations/0002_lockdown.sql)): `context` jsonb ≤ 4kB, `cellar_snapshot` ≤ 64kB, `bottles.notes` ≤ 4000 chars, `bottles.producer` ≤ 200, etc. Stops a multi-MB blob being inserted to crash the watcher.
@@ -173,4 +173,4 @@ Allowlisted user (`eefcd054-d9f9-4ecd-a053-f005a1b0ec9b`) round-tripped successf
 
 Created [`frontend/config.public.js`](frontend/config.public.js) committed to the repo with the live Supabase URL + anon key (both safe to publish; security relies on RLS + the lockdown layers above). `config.local.js` remains gitignored and loads after the public one (with `onerror="this.remove()"` to swallow the 404 on the deployed site), so local dev can override per-environment if you point at a different project.
 
-Once Michael flips Pages on (Settings → Pages → branch `main`, folder `/frontend`), the site will be at `https://michael-ticmn.github.io/mycellar/`.
+Once owner flips Pages on (Settings → Pages → branch `main`, folder `/frontend`), the site will be at `https://michael-ticmn.github.io/mycellar/`.

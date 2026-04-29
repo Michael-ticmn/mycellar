@@ -7,7 +7,7 @@ Build a personal wine cellar app: catalog bottles, get pairing suggestions, buil
 
 ### Product
 - **Name:** cellar27
-- **Audience:** Michael personally, plus occasional small-group tastings for guests
+- **Audience:** owner personally, plus occasional small-group tastings for guests
 - **Scope v1:** catalog + pairing suggestions + tasting flight builder + drink-by dates (all four)
 
 ### Stack
@@ -64,7 +64,7 @@ cellar27 displays result
 ## Constraints Code must respect
 - **No Anthropic API key in app code.** All AI reasoning routes through Claude Code on the VM via the bridge.
 - **GitHub Pages = static only.** No server-side code in the frontend repo. All dynamic behavior via Supabase client SDK.
-- **Brand consistency with play27/grow27.** Reuse the visual language Michael's already established. Dark theme acceptable but cellar27 may benefit from a warmer palette (deep red/burgundy accents) — Code should propose a palette in the BUILD_LOG and let Chat confirm.
+- **Brand consistency with play27/grow27.** Reuse the visual language already established. Dark theme acceptable but cellar27 may benefit from a warmer palette (deep red/burgundy accents) — Code should propose a palette in the BUILD_LOG and let Chat confirm.
 - **Tailscale not required for end users.** The whole point of Path A is that cellar27 works from a phone in the kitchen without VPN.
 - **Watcher must run unattended on the VM.** Use PM2 or a Windows scheduled task. Document the setup in the watcher repo README.
 - **No PII or sensitive data in pairing_requests.** Cellar contents only. Acquired_price is fine but should not be sent into the bridge unless explicitly relevant.

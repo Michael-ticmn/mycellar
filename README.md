@@ -16,7 +16,7 @@ This repo is a monorepo:
 - [BUILD_SPEC.md](BUILD_SPEC.md) — technical plan; what to build, in what order
 - [BUILD_LOG.md](BUILD_LOG.md) — append-only log of work sessions and decisions
 - [CURRENT_STATE.md](CURRENT_STATE.md) — snapshot of where things stand
-- [HANDOFF_QUEUE.md](HANDOFF_QUEUE.md) — pending tasks between Chat / Code / Michael
+- [HANDOFF_QUEUE.md](HANDOFF_QUEUE.md) — pending tasks between Chat / Code / owner
 
 ## Where to start
 

@@ -13,10 +13,10 @@
 - Scan flow (camera capture + Storage upload) — Phase 3.
 - Tasting log, mobile-specific pass, sharing flights — Phase 4 polish.
 
-**Immediate next action:** Michael — deploy the watcher (see [`watcher/README.md`](watcher/README.md)):
+**Immediate next action:** owner — deploy the watcher (see [`watcher/README.md`](watcher/README.md)):
 1. In Supabase dashboard → Database → Replication → enable `pairing_requests`, `pairing_responses`, `scan_requests`, `scan_responses` for the `supabase_realtime` publication.
 2. On the win11 VM: clone the repo, `cd watcher && npm install`, copy `.env.example` to `.env`, paste in `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, `npm start` (or PM2).
 3. On the same VM: launch Claude Code in `<BRIDGE_DIR>` with the prompt documented in `watcher/README.md`.
 4. From the frontend, submit a pairing request and confirm it round-trips.
 
-**Which surface should act next:** Michael (deploy + smoke test), then Code (Phase 3 scan flow) once round-trip works.
+**Which surface should act next:** owner (deploy + smoke test), then Code (Phase 3 scan flow) once round-trip works.

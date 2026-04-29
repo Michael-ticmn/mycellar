@@ -24,7 +24,7 @@ cp .env.example .env
 # (Service role key — Settings → API in Supabase. NEVER ship to the frontend.)
 
 # Optional override; defaults to ~/cellar27-bridge
-# On Windows: BRIDGE_DIR=C:/Users/michael/cellar27-bridge
+# On Windows: BRIDGE_DIR=C:/Users/<your-username>/cellar27-bridge
 
 npm start
 ```

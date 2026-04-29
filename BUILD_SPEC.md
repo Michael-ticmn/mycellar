@@ -261,7 +261,7 @@ request_id: <uuid>
 type: pairing | flight | drink_now
 created: 2026-04-28T19:42:00Z
 expected_count: "1-2" | "3-5" | "1-3"
-respond_to: /home/michael/cellar27-bridge/responses/req-<uuid>.md
+respond_to: ~/cellar27-bridge/responses/req-<uuid>.md
 ---
 
 # cellar27 request
@@ -307,8 +307,8 @@ request_id: <uuid>
 type: scan
 intent: add | pour
 created: 2026-04-28T19:42:00Z
-image_path: /home/michael/cellar27-bridge/images/<uuid>.jpg
-respond_to: /home/michael/cellar27-bridge/responses/scan-<uuid>.md
+image_path: ~/cellar27-bridge/images/<uuid>.jpg
+respond_to: ~/cellar27-bridge/responses/scan-<uuid>.md
 ---
 
 # cellar27 scan request
@@ -435,7 +435,7 @@ This is a long-running Claude Code session. Document the launch command in the w
 
 ## Phase 4 — Polish (post-launch)
 
-Do not start until Phase 1–3 are functional and Michael has used it once for a real meal.
+Do not start until Phase 1–3 are functional and the owner has used it once for a real meal.
 
 - Tasting log: after drinking, capture impressions; feeds back into future pairing context
 - Photo upload for bottles (Supabase Storage)
@@ -449,7 +449,7 @@ Do not start until Phase 1–3 are functional and Michael has used it once for a
 - Change the bridge architecture (file drop is decided)
 - Add a build step / framework (vanilla JS is decided)
 - Add dependencies to the frontend beyond Supabase JS (keep the dependency surface small)
-- Push anything to GitHub Pages until Michael confirms the palette and layout
+- Push anything to GitHub Pages until the owner confirms the palette and layout
 - Send `acquired_price` into the bridge (price is private metadata, not pairing-relevant)
 - Add barcode scanning, an external wine API, or any local cache of scanned wines (explicitly out of scope for v1 — every scan goes fresh through the bridge)
 - Compress label images aggressively. Code may resize to a max dimension (e.g. 1600px long edge) for upload speed, but should preserve enough resolution for vision to read fine print on the label.
