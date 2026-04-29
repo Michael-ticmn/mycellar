@@ -181,3 +181,59 @@ input:focus, select:focus, textarea:focus {
   color: var(--muted);
 }
 .placeholder-view h2 { margin-top: 0; color: var(--highlight); }
+
+/* ──────────── Mobile responsive (≤640px) ──────────── */
+@media (max-width: 640px) {
+  .topbar {
+    padding: 0.5rem 0.75rem;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+  }
+  .brand { font-size: 1.15rem; }
+  .topbar nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    gap: 0.1rem;
+    flex: 1 1 auto;
+  }
+  .topbar nav::-webkit-scrollbar { display: none; }
+  .topbar nav a {
+    padding: 0.35rem 0.55rem;
+    font-size: 0.9rem;
+  }
+  .userbox #user-email { display: none; }
+  .userbox #signout-btn { padding: 0.35rem 0.65rem; font-size: 0.85rem; }
+
+  main { padding: 1rem 0.75rem 4rem; }
+  h1 { font-size: 1.6rem; }
+  h2 { font-size: 1.3rem; }
+
+  /* Two cards per row on phones; smaller photo height */
+  .grid, #cellar-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 0.6rem;
+  }
+  .bottle-card {
+    grid-template-rows: 110px auto;
+  }
+  .bottle-photo { font-size: 2rem; }
+  .bottle-meta { padding: 0.55rem; gap: 0.3rem; }
+  .bottle-meta h3 { font-size: 0.95rem; line-height: 1.15; }
+  .meta-row { font-size: 0.75rem; }
+  .actions button { padding: 0.3rem 0.55rem; font-size: 0.8rem; }
+}
+
+/* Safe-area insets for iOS notch + home indicator (when installed as PWA) */
+@supports (padding: max(0px)) {
+  .topbar {
+    padding-left:  max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-top:   max(0.75rem, env(safe-area-inset-top));
+  }
+  main {
+    padding-left:   max(1rem, env(safe-area-inset-left));
+    padding-right:  max(1rem, env(safe-area-inset-right));
+    padding-bottom: max(4rem, env(safe-area-inset-bottom));
+  }
+}

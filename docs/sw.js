@@ -6,7 +6,7 @@
 // - Everything else (Supabase REST, Realtime, third-party CDN) goes
 //   network-only — never cache user data or auth-bearing requests.
 
-const CACHE_VERSION = 'cellar27-v1';
+const CACHE_VERSION = 'cellar27-v2';
 const SHELL = [
   './',
   './index.html',
