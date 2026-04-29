@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>cellar27 — architecture</title>
+  <style>
+    @page { size: letter landscape; margin: 0.4in; }
+    :root {
+      --bg:        #1a0f0f;
+      --surface:   #2d1818;
+      --surface-2: #3a2020;
+      --accent:    #8b1a1a;
+      --accent-2:  #a83838;
+      --highlight: #d4a574;
+      --text:      #f5e6d3;
+      --muted:     #b39d83;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.4;
+      padding: 0.5in;
+    }
+    h1 {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-weight: 600;
+      font-size: 28pt;
+      margin: 0 0 0.1em;
+      letter-spacing: 0.02em;
+    }
+    h1 .num { color: var(--accent-2); }
+    h1 .sub { color: var(--muted); font-size: 16pt; font-weight: 400; margin-left: 0.5em; }
+    h2 {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      color: var(--highlight);
+      font-size: 14pt;
+      margin: 1em 0 0.3em;
+    }
+    .lead { color: var(--muted); margin: 0 0 1em; }
+
+    /* Diagram */
+    .diagram {
+      width: 100%;
+      height: 4.6in;
+      margin-bottom: 0.4em;
+    }
+
+    /* Steps + security side-by-side after diagram */
+    .body-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 0.5in;
+      margin-top: 0.2em;
+    }
+    .steps { font-size: 9.5pt; }
+    .step {
+      display: grid;
+      grid-template-columns: 1.4em 1fr;
+      gap: 0.4em;
+      margin-bottom: 0.55em;
+      align-items: start;
+    }
+    .step-num {
+      background: var(--accent);
+      color: var(--text);
+      width: 1.3em; height: 1.3em;
+      border-radius: 50%;
+      display: grid; place-items: center;
+      font-weight: 700;
+      font-size: 9pt;
+    }
+    .step-body strong { color: var(--highlight); }
+    .step-body code {
+      background: var(--surface);
+      padding: 0.5px 4px;
+      border-radius: 3px;
+      font-size: 8.5pt;
+      color: var(--text);
+    }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--surface-2);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      padding: 0.5em 0.7em;
+      font-size: 9pt;
+    }
+    .panel ul { margin: 0.2em 0 0; padding-left: 1em; }
+    .panel li { margin: 0.25em 0; }
+    .panel li strong { color: var(--highlight); }
+    .footer {
+      position: fixed;
+      bottom: 0.3in;
+      left: 0.5in;
+      right: 0.5in;
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 8pt;
+    }
+    .footer .brand-tag .num { color: var(--accent-2); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>cellar<span class="num">27</span><span class="sub">how a request travels</span></h1>
+  <p class="lead">Your phone never talks to your laptop. Both talk to Supabase. The laptop watcher does the AI reasoning and writes the answer back. Your phone sees it appear.</p>
+
+  <svg class="diagram" viewBox="0 0 1100 460" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+        <path d="M 0 0 L 12 6 L 0 12 z" fill="#d4a574"/>
+      </marker>
+      <linearGradient id="phoneGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#3a2020"/>
+        <stop offset="100%" stop-color="#2d1818"/>
+      </linearGradient>
+      <linearGradient id="cloudGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#3a2020"/>
+        <stop offset="100%" stop-color="#1a0f0f"/>
+      </linearGradient>
+    </defs>
+
+    <!-- PHONE (left) -->
+    <g>
+      <rect x="20" y="120" width="200" height="280" rx="20" fill="url(#phoneGrad)" stroke="#a83838" stroke-width="2"/>
+      <rect x="50" y="160" width="140" height="220" rx="6" fill="#1a0f0f"/>
+      <text x="120" y="100" text-anchor="middle" font-family="Cormorant Garamond, Georgia, serif" font-size="22" font-weight="600" fill="#f5e6d3">Phone</text>
+      <text x="120" y="118" text-anchor="middle" font-size="11" fill="#b39d83">Safari / installed PWA</text>
+      <text x="120" y="200" text-anchor="middle" font-family="Cormorant Garamond, Georgia, serif" font-size="20" font-weight="600" fill="#f5e6d3">cellar<tspan fill="#a83838">27</tspan></text>
+      <rect x="65" y="220" width="110" height="22" rx="4" fill="#8b1a1a"/>
+      <text x="120" y="236" text-anchor="middle" font-size="10" fill="#f5e6d3">Pair / Scan</text>
+      <text x="120" y="280" text-anchor="middle" font-size="9" fill="#b39d83">↓ tap submit</text>
+      <text x="120" y="305" text-anchor="middle" font-size="9" fill="#b39d83">↑ result renders</text>
+    </g>
+
+    <!-- SUPABASE (center) -->
+    <g>
+      <rect x="380" y="100" width="340" height="270" rx="16" fill="url(#cloudGrad)" stroke="#a83838" stroke-width="2"/>
+      <text x="550" y="135" text-anchor="middle" font-family="Cormorant Garamond, Georgia, serif" font-size="22" font-weight="600" fill="#f5e6d3">Supabase</text>
+      <text x="550" y="153" text-anchor="middle" font-size="11" fill="#b39d83">Postgres · Realtime · Storage · Auth</text>
+
+      <rect x="410" y="180" width="280" height="36" rx="6" fill="#2d1818" stroke="#3a2020"/>
+      <text x="550" y="203" text-anchor="middle" font-size="11" fill="#d4a574">bottles · pairing_requests · scan_requests</text>
+
+      <rect x="410" y="225" width="280" height="36" rx="6" fill="#2d1818" stroke="#3a2020"/>
+      <text x="550" y="248" text-anchor="middle" font-size="11" fill="#d4a574">pairing_responses · scan_responses</text>
+
+      <rect x="410" y="270" width="280" height="36" rx="6" fill="#2d1818" stroke="#3a2020"/>
+      <text x="550" y="293" text-anchor="middle" font-size="11" fill="#d4a574">Storage: bottle-labels (private)</text>
+
+      <text x="550" y="335" text-anchor="middle" font-size="10" fill="#b39d83">RLS scopes everything to your user_id</text>
+      <text x="550" y="350" text-anchor="middle" font-size="10" fill="#b39d83">Realtime fans changes out to subscribers</text>
+    </g>
+
+    <!-- LAPTOP (right) -->
+    <g>
+      <rect x="850" y="80" width="220" height="320" rx="12" fill="url(#phoneGrad)" stroke="#a83838" stroke-width="2"/>
+      <text x="960" y="60" text-anchor="middle" font-family="Cormorant Garamond, Georgia, serif" font-size="22" font-weight="600" fill="#f5e6d3">Laptop</text>
+      <text x="960" y="78" text-anchor="middle" font-size="11" fill="#b39d83">always-on host</text>
+
+      <!-- watcher box -->
+      <rect x="870" y="100" width="180" height="55" rx="6" fill="#2d1818" stroke="#a83838"/>
+      <text x="960" y="121" text-anchor="middle" font-size="12" fill="#d4a574" font-weight="600">watcher (Node)</text>
+      <text x="960" y="138" text-anchor="middle" font-size="9" fill="#b39d83">subscribes · claims · renders · ingests</text>
+
+      <!-- bridge folder -->
+      <rect x="870" y="170" width="180" height="80" rx="6" fill="#1a0f0f" stroke="#3a2020"/>
+      <text x="960" y="190" text-anchor="middle" font-size="11" fill="#d4a574">~/cellar27-bridge/</text>
+      <text x="960" y="207" text-anchor="middle" font-size="9" fill="#b39d83">requests/  responses/</text>
+      <text x="960" y="222" text-anchor="middle" font-size="9" fill="#b39d83">images/  processed/</text>
+      <text x="960" y="240" text-anchor="middle" font-size="8" fill="#b39d83">(markdown files = the message bus)</text>
+
+      <!-- claude box -->
+      <rect x="870" y="265" width="180" height="55" rx="6" fill="#2d1818" stroke="#a83838"/>
+      <text x="960" y="285" text-anchor="middle" font-size="12" fill="#d4a574" font-weight="600">claude --print</text>
+      <text x="960" y="302" text-anchor="middle" font-size="9" fill="#b39d83">spawned per request · vision + reasoning</text>
+
+      <!-- arrows inside laptop showing the loop -->
+      <line x1="960" y1="155" x2="960" y2="170" stroke="#d4a574" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <line x1="960" y1="250" x2="960" y2="265" stroke="#d4a574" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <path d="M 870 295 Q 855 220 870 195" stroke="#d4a574" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+      <text x="843" y="245" font-size="8" fill="#b39d83" text-anchor="middle">writes</text>
+      <text x="843" y="255" font-size="8" fill="#b39d83" text-anchor="middle">response</text>
+
+      <text x="960" y="345" text-anchor="middle" font-size="9" fill="#b39d83">.env: service_role key</text>
+      <text x="960" y="360" text-anchor="middle" font-size="9" fill="#b39d83">+ ALLOWED_USER_IDS allowlist</text>
+      <text x="960" y="375" text-anchor="middle" font-size="9" fill="#b39d83">+ 20 req/hr rate limit</text>
+    </g>
+
+    <!-- Phone -> Supabase: insert request -->
+    <line x1="220" y1="225" x2="375" y2="200" stroke="#d4a574" stroke-width="2" marker-end="url(#arrow)"/>
+    <circle cx="298" cy="200" r="13" fill="#8b1a1a" stroke="#d4a574"/>
+    <text x="298" y="205" text-anchor="middle" font-size="12" fill="#f5e6d3" font-weight="700">1</text>
+    <text x="298" y="180" text-anchor="middle" font-size="10" fill="#b39d83">INSERT pairing_request</text>
+
+    <!-- Supabase -> Laptop: realtime push -->
+    <line x1="725" y1="195" x2="845" y2="125" stroke="#d4a574" stroke-width="2" marker-end="url(#arrow)"/>
+    <circle cx="785" cy="155" r="13" fill="#8b1a1a" stroke="#d4a574"/>
+    <text x="785" y="160" text-anchor="middle" font-size="12" fill="#f5e6d3" font-weight="700">2</text>
+    <text x="787" y="135" text-anchor="middle" font-size="10" fill="#b39d83">Realtime push</text>
+
+    <!-- Laptop processing label -->
+    <text x="785" y="220" text-anchor="middle" font-size="13" fill="#d4a574" font-weight="600">3</text>
+    <text x="785" y="240" text-anchor="middle" font-size="10" fill="#b39d83">policy · claim · md file · spawn claude</text>
+
+    <!-- Laptop -> Supabase: insert response -->
+    <line x1="845" y1="290" x2="725" y2="240" stroke="#d4a574" stroke-width="2" marker-end="url(#arrow)"/>
+    <circle cx="785" cy="270" r="13" fill="#8b1a1a" stroke="#d4a574"/>
+    <text x="785" y="275" text-anchor="middle" font-size="12" fill="#f5e6d3" font-weight="700">4</text>
+    <text x="785" y="305" text-anchor="middle" font-size="10" fill="#b39d83">INSERT pairing_response</text>
+
+    <!-- Supabase -> Phone: realtime push back -->
+    <line x1="375" y1="245" x2="220" y2="305" stroke="#d4a574" stroke-width="2" marker-end="url(#arrow)"/>
+    <circle cx="298" cy="280" r="13" fill="#8b1a1a" stroke="#d4a574"/>
+    <text x="298" y="285" text-anchor="middle" font-size="12" fill="#f5e6d3" font-weight="700">5</text>
+    <text x="298" y="320" text-anchor="middle" font-size="10" fill="#b39d83">Realtime push back · cards render</text>
+  </svg>
+
+  <div class="body-grid">
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body"><strong>Phone</strong> inserts a <code>pairing_request</code> with a snapshot of your cellar and the dish. Anon key + RLS confines it to your <code>user_id</code>.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body"><strong>Supabase</strong> Realtime publishes the new row over a websocket to every subscribed client.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body"><strong>Laptop watcher</strong> hears the event, runs the policy gate (allowlist + rate limit), atomically claims the row (<code>pending → picked_up</code>), renders a markdown request file in <code>~/cellar27-bridge/requests/</code>, and spawns <code>claude --print</code> at it. Claude reads the file, reasons, writes the response markdown to <code>responses/</code>.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body"><strong>Watcher</strong> notices the response file (chokidar), parses it, inserts a <code>pairing_response</code> row, marks the request <code>completed</code>, archives both files into <code>processed/</code>.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body"><strong>Realtime</strong> pushes the new response row to the phone. Frontend renders bottle cards + narrative.</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <strong style="color:var(--highlight)">Liveness</strong>
+        <ul>
+          <li>Laptop only awake during step 3 (~20–60s)</li>
+          <li>Phone offline mid-flight: catches up on reconnect</li>
+          <li>Laptop asleep on submit: row queues; watcher's startup sweep picks it up when laptop wakes</li>
+        </ul>
+      </div>
+      <div class="panel" style="margin-top: 0.4em;">
+        <strong style="color:var(--highlight)">Lockdown</strong>
+        <ul>
+          <li>Sign-ups disabled in Supabase</li>
+          <li><code>service_role</code> key only in <code>watcher/.env</code></li>
+          <li>RLS + allowlist + per-user rate limit</li>
+          <li>DB CHECK constraints + pending-request cap</li>
+          <li>HTTPS only · PWA-installable</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span class="brand-tag">cellar<span class="num">27</span></span>
+    <span>github.com/Michael-ticmn/mycellar</span>
+  </div>
+</body>
+</html>

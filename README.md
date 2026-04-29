@@ -13,6 +13,7 @@ This repo is a monorepo:
 ## Architecture
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — one-page picture of how a request travels from phone → Supabase → laptop → Claude → back
+- [docs-pdf/architecture.pdf](docs-pdf/architecture.pdf) — colored, printable single-page PDF (cellar27 palette + SVG diagram). Source: [docs-pdf/architecture.html](docs-pdf/architecture.html); regenerate with [`docs-pdf/build.sh`](docs-pdf/build.sh).
 
 ## Planning docs
 
