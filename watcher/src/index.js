@@ -5,6 +5,7 @@ import chokidar from 'chokidar';
 import { CONFIG } from './config.js';
 import { renderPairingRequest, renderScanRequest } from './render.js';
 import { parsePairingResponse, parseScanResponse } from './parse.js';
+import { invokeBridgeAgent } from './agent.js';
 
 const log = (...args) => console.log(new Date().toISOString(), ...args);
 const err = (...args) => console.error(new Date().toISOString(), ...args);
@@ -77,11 +78,12 @@ async function pickUp(table, row) {
     .select().single();
   if (claimErr || !claimed) { log(`already claimed: ${table}.${row.id}`); return; }
 
+  let reqPath;
   if (table === 'pairing_requests') {
     const fileName = `req-${claimed.id}.md`;
     const respondTo = join(CONFIG.dirs.responses, fileName);
     const body = renderPairingRequest(claimed, respondTo);
-    const reqPath = join(CONFIG.dirs.requests, fileName);
+    reqPath = join(CONFIG.dirs.requests, fileName);
     await writeFile(reqPath, body, 'utf8');
     log(`wrote pairing request ${reqPath}`);
   } else if (table === 'scan_requests') {
@@ -91,10 +93,12 @@ async function pickUp(table, row) {
     const fileName = `scan-${claimed.id}.md`;
     const respondTo = join(CONFIG.dirs.responses, fileName);
     const body = renderScanRequest(claimed, localImage, respondTo);
-    const reqPath = join(CONFIG.dirs.requests, fileName);
+    reqPath = join(CONFIG.dirs.requests, fileName);
     await writeFile(reqPath, body, 'utf8');
     log(`wrote scan request ${reqPath} (image @ ${localImage})`);
   }
+
+  if (reqPath) invokeBridgeAgent(reqPath);
 }
 
 async function downloadImage(storagePath, localPath) {

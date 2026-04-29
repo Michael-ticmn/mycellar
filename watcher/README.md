@@ -43,20 +43,30 @@ pm2 startup                         # generate startup script (Linux/macOS)
 
 On Windows, use `pm2-windows-startup` or wrap `pm2 resurrect` in a Scheduled Task triggered at logon.
 
-## Running Claude Code on the same VM
+## Reasoning agent — auto-spawned by default
 
-The watcher only handles the Supabase ↔ filesystem half. Claude Code itself reads `~/cellar27-bridge/requests/<file>` and writes `~/cellar27-bridge/responses/<file>`. Launch a long-running session in the bridge directory:
+By default (`AUTO_INVOKE=true` in `.env`), the watcher spawns a fresh `claude --print` session per request and pipes the prompt over stdin. The agent reads the request file, writes the response file at the path in `respond_to`, exits. No long-running session, no manual nudging. See [`src/agent.js`](src/agent.js).
+
+Flags used: `--print` (non-interactive), `--permission-mode acceptEdits` (auto-accept Read/Write), `--no-session-persistence` (don't accumulate session history). `cwd` is `BRIDGE_DIR`. `claude` resolves via PATH (override with `CLAUDE_BIN` in `.env`).
+
+Note: do NOT pass `--bare`. It disables keychain reads, so the spawned `claude` would have no auth and fail with "Please run /login". Without `--bare`, `claude` uses the host user's existing OAuth session.
+
+### Manual fallback
+
+Set `AUTO_INVOKE=false` if you'd rather drive a long-running interactive session yourself (useful for debugging request/response formatting). Then in a separate terminal:
 
 ```bash
-cd ~/cellar27-bridge
-claude   # or however you invoke Claude Code on the VM
+cd <BRIDGE_DIR>
+claude
 ```
 
-Give the session this prompt (paste verbatim):
+Paste this prompt verbatim:
 
 > You are the cellar27 reasoning agent. New request files appear in `requests/` named `req-<uuid>.md` (pairing/flight/drink-now) or `scan-<uuid>.md` (label scan). For each new file: read it, follow the Task and Response format sections, write the response file at the path in the `respond_to` frontmatter field. Do not move or delete the request file — the watcher handles archival. If you can't fulfill a request, write a response file that explains why in the Narrative section and uses an empty Recommendations list (or null Extracted/Match for scan).
 
-The watcher detects the response file via chokidar, ingests it, and archives both files into `processed/`.
+You'll need to nudge it ("check requests/ for new files") each time something arrives.
+
+In both modes the watcher detects the response file via chokidar, ingests it, and archives both files into `processed/`.
 
 ## Bridge contract
 
@@ -73,7 +83,8 @@ watcher/
     ├── index.js     main loop: subscribe, watch, timeout, lifecycle
     ├── config.js    loads env, derives bridge dir layout
     ├── render.js    Supabase row → markdown request file
-    └── parse.js     markdown response file → Supabase row
+    ├── parse.js     markdown response file → Supabase row
+    └── agent.js     spawns `claude --print` per request
 ```
 
 ## Troubleshooting

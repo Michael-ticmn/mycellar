@@ -112,3 +112,30 @@ Node 20+ ES-module service. Single process, ~250 LOC.
 
 ### Expected next
 Michael: deploy the watcher to the VM, enable Realtime publications, launch Claude Code with the bridge prompt, then do an end-to-end smoke test by submitting a pairing request from the frontend. Then either Phase 3 (scan UX) or polish (tasting log, mobile pass).
+
+---
+
+## 2026-04-28 — Phase 2 verified live + autonomous trigger
+
+Deployed the watcher on this dev box (Win11) instead of the spec's home-lab VM — fastest path to a working round-trip. Realtime publications added via SQL (`alter publication supabase_realtime add table ...`) since the dashboard "Replication" UI was confusing (it primarily exposes paid read-replicas, not the free Postgres-changes publication).
+
+First smoke test required a manual bridge-agent Claude Code session (user nudged "check requests/" each time). Worked end-to-end: pairing request submitted from browser → response card + narrative rendered, ~80 seconds.
+
+### Autonomous trigger ([`watcher/src/agent.js`](watcher/src/agent.js))
+
+Replaced manual nudging by spawning a fresh `claude --print` per request. Prompt is piped via stdin (avoids Windows quoting issues). `cwd = BRIDGE_DIR` so relative paths in the request file Just Work.
+
+Important: do NOT pass `--bare`. It looks attractive (skips hooks/CLAUDE.md/etc for fast deterministic runs) but it ALSO disables keychain reads, so the spawned `claude` has no OAuth and exits with "Please run /login". Final flag set: `--print --permission-mode acceptEdits --no-session-persistence`.
+
+Two consecutive autonomous round-trips: ~22s each, no human in the loop. Bridge-agent terminal no longer required.
+
+Also confirmed: `AUTO_INVOKE=false` env var preserves the manual fallback for debugging request/response formatting drift.
+
+### Operational shape now
+- Watcher running in background (npm start) on this laptop
+- Frontend served by `py -m http.server 8000` (background)
+- Phone access not yet wired (still on `localhost`); GH Pages deploy + PWA wrapper queued
+- Laptop must be awake for the watcher + agent to process; phone can read responses from Supabase even after laptop sleeps (Realtime still pushes to subscribed clients on next online window)
+
+### Expected next
+GH Pages deploy → PWA wrapper → phone-from-the-kitchen actually working. Phase 3 (scan UX) after.
