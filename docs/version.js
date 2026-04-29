@@ -11,4 +11,4 @@
 //
 // `self` works in both window and ServiceWorker global scope, so the same
 // assignment is valid in both contexts.
-self.CELLAR_VERSION = '0.5.2';
+self.CELLAR_VERSION = '0.5.3';

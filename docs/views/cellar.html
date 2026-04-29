@@ -1,4 +1,22 @@
 <section>
-  <p class="muted">Your bottles. Tap Pour to decrement; tap Add to enter a new one.</p>
+  <div class="cellar-toolbar">
+    <input type="search" id="cellar-search" placeholder="Search producer, wine, region…" autocomplete="off" />
+    <div class="filter-chips" id="cellar-filters" role="tablist" aria-label="Filter by style">
+      <button class="chip active" data-style-filter="all">All</button>
+      <button class="chip" data-style-filter="red">Red</button>
+      <button class="chip" data-style-filter="white">White</button>
+      <button class="chip" data-style-filter="rose">Rosé</button>
+      <button class="chip" data-style-filter="sparkling">Sparkling</button>
+      <button class="chip" data-style-filter="sweet">Sweet</button>
+    </div>
+    <select id="cellar-sort" aria-label="Sort">
+      <option value="recent">Recently added</option>
+      <option value="producer">Producer A–Z</option>
+      <option value="vintage">Vintage (newest)</option>
+      <option value="vintage_oldest">Vintage (oldest)</option>
+      <option value="drink_end">Drink window end</option>
+    </select>
+  </div>
+  <p class="muted" id="cellar-count" hidden></p>
   <div id="cellar-grid" class="grid"></div>
 </section>

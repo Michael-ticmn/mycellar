@@ -19,14 +19,16 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 // ── Routing (hash-based, supports `bottle/<id>`) ──────────────────
-const ROUTES = ['cellar', 'add', 'pairing', 'flight', 'drink-now', 'scan', 'bottle'];
+const ROUTES = ['cellar', 'add', 'edit', 'pairing', 'flight', 'drink-now', 'scan', 'bottle'];
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
   const [route, ...params] = h.split('/');
   return { route: ROUTES.includes(route) ? route : 'cellar', params };
 }
 async function loadView(name) {
-  const res = await fetch(`views/${name}.html`);
+  // Edit reuses the add view (form is identical; submit handler differs).
+  const file = name === 'edit' ? 'add' : name;
+  const res = await fetch(`views/${file}.html`);
   return res.ok ? res.text() : `<p>View not found: ${name}</p>`;
 }
 
@@ -50,6 +52,7 @@ async function mountView(route, params = []) {
   switch (route) {
     case 'cellar':     return mountCellar();
     case 'add':        return mountAddBottle();
+    case 'edit':       return mountAddBottle(params[0]);
     case 'drink-now':  return mountDrinkNow();
     case 'pairing':    return mountPairing();
     case 'flight':     return mountFlight();
@@ -58,7 +61,15 @@ async function mountView(route, params = []) {
   }
 }
 
-// ── Cellar grid ───────────────────────────────────────────────────
+// ── Cellar grid (with search / filter / sort) ─────────────────────
+const STYLE_GROUPS = {
+  red:       ['light_red', 'medium_red', 'full_red'],
+  white:     ['light_white', 'full_white'],
+  rose:      ['rose'],
+  sparkling: ['sparkling'],
+  sweet:     ['dessert', 'fortified'],
+};
+
 async function mountCellar() {
   const grid = $('#cellar-grid');
   if (!grid) return;
@@ -70,17 +81,75 @@ async function mountCellar() {
     grid.innerHTML = '<p class="muted">Empty cellar. <a href="#/scan">Scan a bottle →</a> or <a href="#/add">add manually</a>.</p>';
     return;
   }
-  grid.innerHTML = bottles.map(bottleCardHTML).join('');
-  // Card body click → detail; buttons handle their own clicks
-  $$('.bottle-card', grid).forEach((card) => {
-    card.addEventListener('click', (e) => {
-      if (e.target.closest('button')) return;
-      const id = card.dataset.bottleId;
-      if (id) location.hash = `#/bottle/${id}`;
+
+  // Filter / sort / search state
+  let activeFilter = 'all';
+  let sortMode = $('#cellar-sort')?.value || 'recent';
+  let searchTerm = '';
+
+  const repaint = () => {
+    let view = bottles.slice();
+
+    // Filter by style group
+    if (activeFilter !== 'all') {
+      const allowed = new Set(STYLE_GROUPS[activeFilter] || []);
+      view = view.filter((b) => allowed.has(b.style));
+    }
+
+    // Search across producer, wine_name, varietal, region, country
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      view = view.filter((b) => [b.producer, b.wine_name, b.varietal, b.region, b.country]
+        .some((s) => (s || '').toLowerCase().includes(q)));
+    }
+
+    // Sort
+    const cmp = {
+      recent:         (a, b) => (b.created_at || '').localeCompare(a.created_at || ''),
+      producer:       (a, b) => (a.producer || '').localeCompare(b.producer || ''),
+      vintage:        (a, b) => (b.vintage || 0) - (a.vintage || 0),
+      vintage_oldest: (a, b) => (a.vintage || 9999) - (b.vintage || 9999),
+      drink_end:      (a, b) => (a.drink_window_end || 9999) - (b.drink_window_end || 9999),
+    }[sortMode] || (() => 0);
+    view.sort(cmp);
+
+    const count = $('#cellar-count');
+    if (count) {
+      count.hidden = view.length === bottles.length && !searchTerm && activeFilter === 'all';
+      count.textContent = `${view.length} of ${bottles.length} bottles`;
+    }
+
+    if (!view.length) {
+      grid.innerHTML = '<p class="muted">No bottles match.</p>';
+      return;
+    }
+    grid.innerHTML = view.map(bottleCardHTML).join('');
+    $$('.bottle-card', grid).forEach((card) => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        const id = card.dataset.bottleId;
+        if (id) location.hash = `#/bottle/${id}`;
+      });
+    });
+    $$('[data-pour]',   grid).forEach((btn) => btn.addEventListener('click', onPour));
+    $$('[data-delete]', grid).forEach((btn) => btn.addEventListener('click', onDelete));
+  };
+
+  // Wire toolbar
+  const search = $('#cellar-search');
+  if (search) search.addEventListener('input', (e) => { searchTerm = e.target.value.trim(); repaint(); });
+  const sort = $('#cellar-sort');
+  if (sort) sort.addEventListener('change', (e) => { sortMode = e.target.value; repaint(); });
+  $$('#cellar-filters .chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      $$('#cellar-filters .chip').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      activeFilter = chip.dataset.styleFilter;
+      repaint();
     });
   });
-  $$('[data-pour]', grid).forEach((btn) => btn.addEventListener('click', onPour));
-  $$('[data-delete]', grid).forEach((btn) => btn.addEventListener('click', onDelete));
+
+  repaint();
 }
 
 function bottleCardHTML(b) {
@@ -123,8 +192,8 @@ async function onDelete(e) {
   catch (err) { alert(err.message); }
 }
 
-// ── Add bottle (manual) ───────────────────────────────────────────
-function mountAddBottle() {
+// ── Add / Edit bottle (manual) ────────────────────────────────────
+async function mountAddBottle(bottleId) {
   const form = $('#add-bottle-form');
   if (!form) return;
 
@@ -132,6 +201,24 @@ function mountAddBottle() {
   if (dl) dl.innerHTML = VARIETAL_NAMES.map((v) => `<option value="${v}">`).join('');
   const styleSel = form.style;
   if (styleSel) styleSel.innerHTML = STYLES.map((s) => `<option value="${s}">${s}</option>`).join('');
+
+  // Edit mode: prefill from existing row + change page heading.
+  let existing = null;
+  if (bottleId) {
+    try { existing = await getBottle(bottleId); }
+    catch (err) {
+      $('#main').innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`;
+      return;
+    }
+    const heading = $('#main h1');
+    if (heading) heading.textContent = 'Edit bottle';
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.textContent = 'Save changes';
+    for (const f of ['producer','wine_name','varietal','vintage','region','country','style','sweetness','body','quantity','storage_location','acquired_date','acquired_price','drink_window_start','drink_window_end','notes']) {
+      const el = form.elements[f];
+      if (el && existing[f] != null) el.value = existing[f];
+    }
+  }
 
   const updateWindowHint = () => {
     const v = form.varietal.value;
@@ -152,10 +239,39 @@ function mountAddBottle() {
     const fd = new FormData(form);
     const input = collectBottleFields(fd);
     try {
-      const created = await createBottle(input);
-      location.hash = `#/bottle/${created.id}`;
+      if (bottleId) {
+        await updateBottle(bottleId, input);
+        location.hash = `#/bottle/${bottleId}`;
+      } else {
+        const created = await createBottle(input);
+        location.hash = `#/bottle/${created.id}`;
+        // Background: ask the sommelier for enrichment so the detail page
+        // fills in tasting notes etc without the user clicking anything.
+        autoEnrich(created.id);
+      }
     } catch (err) { alert(err.message); }
   });
+}
+
+// Tracks bottles currently being enriched so the detail view can show a
+// "Fetching sommelier notes…" banner instead of the Get-details button.
+const enrichingBottles = new Set();
+async function autoEnrich(bottleId) {
+  if (enrichingBottles.has(bottleId)) return;
+  enrichingBottles.add(bottleId);
+  try {
+    const response = await requestEnrichment(bottleId);
+    const details = response.extracted?.details || response.extracted || null;
+    if (details) {
+      await updateBottle(bottleId, { details });
+      // If the user is still on this bottle's detail page, re-render with details.
+      if (location.hash === `#/bottle/${bottleId}`) render();
+    }
+  } catch (err) {
+    console.warn('[cellar27] autoEnrich failed:', err);
+  } finally {
+    enrichingBottles.delete(bottleId);
+  }
 }
 
 function collectBottleFields(fd) {
@@ -602,14 +718,19 @@ function renderBottleDetailHTML(b, frontUrl, backUrl) {
   const w = (b.drink_window_start && b.drink_window_end) ? `${b.drink_window_start}–${b.drink_window_end}` : '—';
   const photos = (frontUrl || backUrl) ? `
     <div class="bottle-detail-photos">
-      ${frontUrl ? `<img src="${frontUrl}" alt="Front label" />` : ''}
-      ${backUrl  ? `<img src="${backUrl}"  alt="Back label" />`  : ''}
+      ${frontUrl ? `<img src="${frontUrl}" alt="Front label" data-zoom="${escapeAttr(frontUrl)}" />` : ''}
+      ${backUrl  ? `<img src="${backUrl}"  alt="Back label"  data-zoom="${escapeAttr(backUrl)}"  />` : ''}
     </div>` : '';
-  const detailsBtn = b.details
-    ? `<button data-action="refresh-details" class="ghost">Refresh details</button>`
-    : `<button data-action="fetch-details" class="ghost">Get details</button>`;
+
+  const isEnriching = enrichingBottles.has(b.id);
+  const detailsBtn = isEnriching
+    ? `<span class="muted" style="align-self:center; padding: 0.5rem 0;">Fetching sommelier notes…</span>`
+    : (b.details
+        ? `<button data-action="refresh-details" class="ghost">Refresh details</button>`
+        : `<button data-action="fetch-details" class="ghost">Get details</button>`);
+
   return `
-    <article class="bottle-detail-card">
+    <article class="bottle-detail-card" data-style="${escapeAttr(b.style || '')}">
       ${photos}
       <header>
         <h1>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h1>
@@ -630,6 +751,7 @@ function renderBottleDetailHTML(b, frontUrl, backUrl) {
       </dl>
       <div class="row">
         <button data-action="pour" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
+        <button data-action="edit" class="ghost">Edit</button>
         <button data-action="delete" class="ghost">Delete</button>
         ${detailsBtn}
       </div>
@@ -642,6 +764,11 @@ function renderBottleDetailHTML(b, frontUrl, backUrl) {
 }
 
 function wireBottleDetail(root, bottle) {
+  // Tap a label photo → fullscreen lightbox.
+  $$('img[data-zoom]', root).forEach((img) => {
+    img.addEventListener('click', () => openLightbox(img.dataset.zoom));
+  });
+
   root.addEventListener('click', async (e) => {
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (!action) return;
@@ -651,6 +778,10 @@ function wireBottleDetail(root, bottle) {
         showToast('Poured. Undo?', { actionLabel: 'Undo', onAction: () => undoPour(bottle.id).then(() => render()) });
         render();
       } catch (err) { alert(err.message); }
+      return;
+    }
+    if (action === 'edit') {
+      location.hash = `#/edit/${bottle.id}`;
       return;
     }
     if (action === 'delete') {
@@ -738,6 +869,19 @@ function wireAuth() {
     }
   });
   $('#signout-btn').addEventListener('click', () => signOut());
+}
+
+// ── Lightbox (tap photo → fullscreen) ─────────────────────────────
+function openLightbox(src) {
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox';
+  overlay.innerHTML = `<img src="${src}" alt="" />`;
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', close);
+  document.addEventListener('keydown', function onKey(e) {
+    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+  });
+  document.body.appendChild(overlay);
 }
 
 // ── Toast ─────────────────────────────────────────────────────────

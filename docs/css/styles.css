@@ -183,6 +183,66 @@ input:focus, select:focus, textarea:focus {
 }
 #toast button { padding: 0.25rem 0.65rem; font-size: 0.85rem; }
 
+/* Cellar toolbar: search + filter chips + sort */
+.cellar-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  align-items: center;
+}
+.cellar-toolbar #cellar-search {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.cellar-toolbar #cellar-sort {
+  flex: 0 0 auto;
+}
+.filter-chips {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  flex: 1 1 100%;
+  order: 3; /* push to its own row on narrow screens */
+}
+.chip {
+  font: inherit;
+  font-size: 0.85rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--surface-2);
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chip:hover { background: var(--surface-2); }
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent-2);
+  color: var(--text);
+}
+@media (min-width: 641px) {
+  .filter-chips { order: 2; flex: 0 1 auto; }
+}
+#cellar-count { font-size: 0.85rem; margin: 0 0 0.75rem; }
+
+/* Lightbox: tap a label photo → fullscreen */
+.lightbox {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.95);
+  display: grid; place-items: center;
+  z-index: 100;
+  padding: 1rem;
+  cursor: zoom-out;
+}
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius);
+}
+
 /* Bottle card hover/focus when clickable */
 .bottle-card[data-bottle-id] { cursor: pointer; transition: transform 0.1s, box-shadow 0.1s; }
 .bottle-card[data-bottle-id]:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
