@@ -79,6 +79,17 @@ export async function requestFlight({ theme, guests, length }) {
   return { request: req, response: await waitForResponse(req.id) };
 }
 
+// Ask the sommelier for 1–2 wines NOT in the cellar that would expand
+// flight-building potential. Recommendations array stays empty (those
+// picks aren't owned); the actual suggestions live in the narrative.
+export async function requestFlightExtras({ themeHint }) {
+  const req = await createRequest({
+    requestType: 'flight',
+    context: { kind: 'extras', theme_hint: themeHint || null },
+  });
+  return { request: req, response: await waitForResponse(req.id) };
+}
+
 export async function requestDrinkNow({ notes }) {
   const req = await createRequest({
     requestType: 'drink_now',

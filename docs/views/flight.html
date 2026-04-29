@@ -1,6 +1,6 @@
 <section>
   <h1>Flight builder</h1>
-  <p class="muted">Tell the bridge a theme; it'll order 3–5 bottles into a teaching flight.</p>
+  <p class="muted">Tell your sommelier a theme; they'll order 3–5 bottles from your cellar into a teaching flight.</p>
   <form id="flight-form">
     <label>Theme
       <select name="theme">
@@ -23,4 +23,16 @@
     <button type="submit">Build flight</button>
   </form>
   <div id="flight-result"></div>
+
+  <hr style="border-color: var(--surface-2); margin: 2rem 0;" />
+
+  <h2>Round out the cellar</h2>
+  <p class="muted">Suggest 1–2 wines you don't have that would meaningfully expand what flights you could build.</p>
+  <form id="flight-extras-form">
+    <label>Theme or constraint (optional)
+      <input name="theme_hint" placeholder="e.g. fill out my Burgundy collection, more Old World whites" />
+    </label>
+    <button type="submit">Suggest additions</button>
+  </form>
+  <div id="flight-extras-result"></div>
 </section>

@@ -1,7 +1,7 @@
 import { getSession, signIn, signUp, signOut, onAuthChange } from './auth.js';
 import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, updateBottle } from './bottles.js';
 import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
-import { requestPairing, requestFlight, requestDrinkNow } from './pairings.js';
+import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } from './pairings.js';
 import {
   startCamera, stopCamera, captureFrame,
   uploadCapture, submitScanRequest, waitForScanResponse,
@@ -88,7 +88,7 @@ function bottleCardHTML(b) {
     ? `${b.drink_window_start}–${b.drink_window_end}`
     : '—';
   return `
-    <article class="bottle-card" data-bottle-id="${b.id}" tabindex="0">
+    <article class="bottle-card" data-bottle-id="${b.id}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
       <div class="bottle-photo placeholder">${escapeHtml((b.producer || '?')[0])}</div>
       <div class="bottle-meta">
         <h3>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
@@ -179,7 +179,7 @@ function collectBottleFields(fd) {
   };
 }
 
-// ── Bridge requests (pairing / flight / drink-now suggestions) ────
+// ── Sommelier requests (pairing / flight / drink-now suggestions) ────
 function setBusy(resultEl, msg) {
   resultEl.innerHTML = `<p class="muted">${escapeHtml(msg)}</p>`;
 }
@@ -195,7 +195,7 @@ async function renderRecommendations(resultEl, response) {
         <p>${escapeHtml(r.reasoning || '')}</p>
       </div></article>`;
     }
-    return `<article class="bottle-card">
+    return `<article class="bottle-card" data-style="${escapeAttr(bottle.style || '')}">
       <div class="bottle-photo placeholder">${escapeHtml((bottle.producer || '?')[0])}</div>
       <div class="bottle-meta">
         <h3>${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}</h3>
@@ -230,7 +230,7 @@ function mountPairing() {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    setBusy(result, 'Asking the bridge… (Claude on the VM picks this up; up to a couple of minutes)');
+    setBusy(result, 'Asking your sommelier… (up to a couple of minutes)');
     try {
       const { response } = await requestPairing({
         dish: fd.get('dish').trim(),
@@ -246,20 +246,39 @@ function mountPairing() {
 function mountFlight() {
   const form = $('#flight-form');
   const result = $('#flight-result');
-  if (!form) return;
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(form);
-    setBusy(result, 'Building the flight… (this may take a couple of minutes)');
-    try {
-      const { response } = await requestFlight({
-        theme: fd.get('theme'),
-        guests: numOrNull(fd.get('guests')) ?? 4,
-        length: numOrNull(fd.get('length')) ?? 3,
-      });
-      await renderRecommendations(result, response);
-    } catch (err) { result.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
-  });
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      setBusy(result, 'Building the flight… (this may take a couple of minutes)');
+      try {
+        const { response } = await requestFlight({
+          theme: fd.get('theme'),
+          guests: numOrNull(fd.get('guests')) ?? 4,
+          length: numOrNull(fd.get('length')) ?? 3,
+        });
+        await renderRecommendations(result, response);
+      } catch (err) { result.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+    });
+  }
+  const extrasForm = $('#flight-extras-form');
+  const extrasResult = $('#flight-extras-result');
+  if (extrasForm) {
+    extrasForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(extrasForm);
+      setBusy(extrasResult, 'Asking your sommelier what to add…');
+      try {
+        const { response } = await requestFlightExtras({
+          themeHint: fd.get('theme_hint')?.trim() || null,
+        });
+        // No structured cellar picks — render narrative only.
+        extrasResult.innerHTML = response.narrative
+          ? `<section><h3>Suggestions</h3><div class="narrative">${markdownLite(response.narrative)}</div></section>`
+          : '<p class="muted">(no suggestions)</p>';
+      } catch (err) { extrasResult.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+    });
+  }
 }
 
 // ── Drink-now ─────────────────────────────────────────────────────
@@ -270,7 +289,7 @@ async function mountDrinkNow() {
     dnForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(dnForm);
-      setBusy(dnResult, 'Asking the bridge…');
+      setBusy(dnResult, 'Asking your sommelier…');
       try {
         const { response } = await requestDrinkNow({ notes: fd.get('notes')?.trim() || null });
         await renderRecommendations(dnResult, response);
@@ -498,7 +517,7 @@ async function renderPourResultHTML(response) {
     if (b) {
       return `
         <h2>Found a match</h2>
-        <article class="bottle-card">
+        <article class="bottle-card" data-style="${escapeAttr(b.style || '')}">
           <div class="bottle-photo placeholder">${escapeHtml((b.producer || '?')[0])}</div>
           <div class="bottle-meta">
             <h3>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
@@ -618,7 +637,7 @@ function wireBottleDetail(root, bottle) {
     if (action === 'fetch-details' || action === 'refresh-details') {
       const btn = e.target.closest('button');
       const wasLabel = btn.textContent;
-      btn.disabled = true; btn.textContent = 'Asking the bridge…';
+      btn.disabled = true; btn.textContent = 'Asking your sommelier…';
       try {
         const response = await requestEnrichment(bottle.id);
         const details = response.extracted?.details || response.extracted || null;

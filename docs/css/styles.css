@@ -150,6 +150,17 @@ input:focus, select:focus, textarea:focus {
 .bottle-photo.placeholder {
   background: linear-gradient(135deg, var(--surface-2), var(--accent));
 }
+
+/* Wine-color tinted placeholders by style */
+.bottle-card[data-style="light_red"]    .bottle-photo.placeholder { background: linear-gradient(135deg, #6b2828, #c45050); color: #f5e6d3; }
+.bottle-card[data-style="medium_red"]   .bottle-photo.placeholder { background: linear-gradient(135deg, #4a1414, #8b1a1a); color: #f5e6d3; }
+.bottle-card[data-style="full_red"]     .bottle-photo.placeholder { background: linear-gradient(135deg, #2a0606, #5a1212); color: #f5e6d3; }
+.bottle-card[data-style="light_white"]  .bottle-photo.placeholder { background: linear-gradient(135deg, #d4cc88, #f0e8a8); color: #4a3818; }
+.bottle-card[data-style="full_white"]   .bottle-photo.placeholder { background: linear-gradient(135deg, #b89858, #d8b878); color: #3a2810; }
+.bottle-card[data-style="rose"]         .bottle-photo.placeholder { background: linear-gradient(135deg, #d07878, #e8a8a8); color: #5a2828; }
+.bottle-card[data-style="sparkling"]    .bottle-photo.placeholder { background: linear-gradient(135deg, #d8c878, #f0e0a0); color: #4a3818; }
+.bottle-card[data-style="dessert"]      .bottle-photo.placeholder { background: linear-gradient(135deg, #a8682a, #d09858); color: #2a1808; }
+.bottle-card[data-style="fortified"]    .bottle-photo.placeholder { background: linear-gradient(135deg, #4a1808, #8a3818); color: #f5e6d3; }
 .bottle-meta { padding: 0.75rem; display: grid; gap: 0.4rem; }
 .bottle-meta h3 { font-size: 1.1rem; }
 .meta-row { display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--muted); margin: 0; }
