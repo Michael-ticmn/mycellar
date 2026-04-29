@@ -6,9 +6,9 @@ This repo is a monorepo:
 
 | Path | What | Status |
 |------|------|--------|
-| [`frontend/`](frontend/) | Static HTML/CSS/JS app, future GH Pages source | Phase 1 scaffold |
-| [`watcher/`](watcher/) | Node service on the win11 VM that bridges Supabase ↔ Claude Code | Phase 2 (not started) |
-| [`supabase/migrations/`](supabase/migrations/) | SQL migrations for the Supabase project | 0001_init ready |
+| [`docs/`](docs/) | Static HTML/CSS/JS app, served by GitHub Pages | live |
+| [`watcher/`](watcher/) | Node service that bridges Supabase ↔ Claude Code | live |
+| [`supabase/migrations/`](supabase/migrations/) | SQL migrations for the Supabase project | 0002 applied |
 
 ## Planning docs
 

@@ -174,3 +174,19 @@ Allowlisted user (`eefcd054-d9f9-4ecd-a053-f005a1b0ec9b`) round-tripped successf
 Created [`frontend/config.public.js`](frontend/config.public.js) committed to the repo with the live Supabase URL + anon key (both safe to publish; security relies on RLS + the lockdown layers above). `config.local.js` remains gitignored and loads after the public one (with `onerror="this.remove()"` to swallow the 404 on the deployed site), so local dev can override per-environment if you point at a different project.
 
 Once owner flips Pages on (Settings → Pages → branch `main`, folder `/frontend`), the site will be at `https://michael-ticmn.github.io/mycellar/`.
+
+---
+
+## 2026-04-28 — GH Pages live + `frontend/` → `docs/` rename
+
+Owner enabled GH Pages from `/` (root) — site loaded the rendered repo README at `michael-ticmn.github.io/mycellar/` because GH Pages' folder picker only supports `/` or `/docs`, not arbitrary subdirs like `/frontend`.
+
+First-pass workaround: added a root `index.html` meta-refresh redirect + `.nojekyll` so `/frontend/` would still load the app (with an extra hop in the URL). Worked but ugly.
+
+Owner asked to clean it up. Did Option B: renamed `frontend/` → `docs/` so GH Pages serves the app directly at `michael-ticmn.github.io/mycellar/` with no redirect.
+
+Mechanics: VSCode's file watcher held `frontend/` open, blocking `git mv`. Worked around by `Copy-Item -Recurse` to `docs/` then `Remove-Item -Recurse` of `frontend/` (PowerShell handles the locked-handle case better than POSIX mv). Then `git rm -r --cached frontend/` + `git add docs/` so git records the rename. Removed the root `index.html` redirect since it's no longer needed (`.nojekyll` stays — still useful so GH Pages doesn't try to render any future README at root).
+
+Updated path references in `.gitignore`, root `README.md`, `HANDOFF_QUEUE.md`, `CURRENT_STATE.md`, `docs/README.md`, and the error message in `docs/js/supabase-client.js`. Historical `frontend/` mentions in earlier BUILD_LOG entries kept as-is — accurate for their time.
+
+Owner needs to switch GH Pages source folder from `/` to `/docs` after this push.
