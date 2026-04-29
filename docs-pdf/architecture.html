@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>cellar27 — architecture</title>
   <style>
-    @page { size: letter landscape; margin: 0.4in; }
+    @page { size: letter landscape; margin: 0.35in; }
     :root {
       --bg:        #1a0f0f;
       --surface:   #2d1818;
@@ -21,64 +21,62 @@
       background: var(--bg);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      font-size: 10.5pt;
-      line-height: 1.4;
-      padding: 0.5in;
+      font-size: 9.5pt;
+      line-height: 1.35;
+    }
+    .page {
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
     h1 {
       font-family: 'Cormorant Garamond', Georgia, serif;
       font-weight: 600;
-      font-size: 28pt;
-      margin: 0 0 0.1em;
+      font-size: 20pt;
+      margin: 0 0 0.05em;
       letter-spacing: 0.02em;
     }
     h1 .num { color: var(--accent-2); }
-    h1 .sub { color: var(--muted); font-size: 16pt; font-weight: 400; margin-left: 0.5em; }
-    h2 {
-      font-family: 'Cormorant Garamond', Georgia, serif;
-      color: var(--highlight);
-      font-size: 14pt;
-      margin: 1em 0 0.3em;
-    }
-    .lead { color: var(--muted); margin: 0 0 1em; }
+    h1 .sub { color: var(--muted); font-size: 12pt; font-weight: 400; margin-left: 0.5em; }
+    .lead { color: var(--muted); margin: 0 0 0.5em; font-size: 9.5pt; }
 
     /* Diagram */
     .diagram {
       width: 100%;
-      height: 4.6in;
-      margin-bottom: 0.4em;
+      height: 3.5in;
+      margin-bottom: 0.25em;
+      display: block;
     }
 
     /* Steps + security side-by-side after diagram */
     .body-grid {
       display: grid;
-      grid-template-columns: 2fr 1fr;
-      gap: 0.5in;
-      margin-top: 0.2em;
+      grid-template-columns: 1.9fr 1fr;
+      gap: 0.4in;
+      margin-top: 0.1em;
     }
-    .steps { font-size: 9.5pt; }
+    .steps { font-size: 9pt; }
     .step {
       display: grid;
-      grid-template-columns: 1.4em 1fr;
-      gap: 0.4em;
-      margin-bottom: 0.55em;
+      grid-template-columns: 1.3em 1fr;
+      gap: 0.35em;
+      margin-bottom: 0.4em;
       align-items: start;
     }
     .step-num {
       background: var(--accent);
       color: var(--text);
-      width: 1.3em; height: 1.3em;
+      width: 1.2em; height: 1.2em;
       border-radius: 50%;
       display: grid; place-items: center;
       font-weight: 700;
-      font-size: 9pt;
+      font-size: 8.5pt;
     }
     .step-body strong { color: var(--highlight); }
     .step-body code {
       background: var(--surface);
       padding: 0.5px 4px;
       border-radius: 3px;
-      font-size: 8.5pt;
+      font-size: 8pt;
       color: var(--text);
     }
     .panel {
@@ -86,21 +84,18 @@
       border: 1px solid var(--surface-2);
       border-left: 3px solid var(--accent);
       border-radius: 6px;
-      padding: 0.5em 0.7em;
-      font-size: 9pt;
+      padding: 0.4em 0.6em;
+      font-size: 8.5pt;
     }
-    .panel ul { margin: 0.2em 0 0; padding-left: 1em; }
-    .panel li { margin: 0.25em 0; }
-    .panel li strong { color: var(--highlight); }
+    .panel-title { color: var(--highlight); font-weight: 600; font-size: 9.5pt; }
+    .panel ul { margin: 0.15em 0 0; padding-left: 1em; }
+    .panel li { margin: 0.18em 0; }
     .footer {
-      position: fixed;
-      bottom: 0.3in;
-      left: 0.5in;
-      right: 0.5in;
+      margin-top: 0.4em;
       display: flex;
       justify-content: space-between;
       color: var(--muted);
-      font-size: 8pt;
+      font-size: 7.5pt;
     }
     .footer .brand-tag .num { color: var(--accent-2); font-weight: 600; }
   </style>
