@@ -139,3 +139,38 @@ Also confirmed: `AUTO_INVOKE=false` env var preserves the manual fallback for de
 
 ### Expected next
 GH Pages deploy → PWA wrapper → phone-from-the-kitchen actually working. Phase 3 (scan UX) after.
+
+---
+
+## 2026-04-28 — Lockdown before going public
+
+Concern: deploying to GH Pages exposes a public URL. Anyone could sign up → submit pairing requests → my watcher spawns Claude on my laptop for them. Defense in depth before publishing the URL.
+
+### Layers
+
+1. **Disable open sign-ups in Supabase** (Auth → Sign In / Providers → "Allow new users to sign up" OFF). Single-user system anyway. Done by Michael.
+2. **Watcher allowlist** ([`watcher/src/policy.js`](watcher/src/policy.js)): `ALLOWED_USER_IDS` env var, comma-separated UUIDs. Empty = open mode. Non-allowlisted requests get marked `status='error'` immediately, no `claude` spawn.
+3. **Per-user rate limit** in the same module: max 20 requests/hour, sliding-window in-memory counter. Caps blast radius if an account is compromised.
+4. **DB-layer CHECK constraints** ([`supabase/migrations/0002_lockdown.sql`](supabase/migrations/0002_lockdown.sql)): `context` jsonb ≤ 4kB, `cellar_snapshot` ≤ 64kB, `bottles.notes` ≤ 4000 chars, `bottles.producer` ≤ 200, etc. Stops a multi-MB blob being inserted to crash the watcher.
+5. **DB-layer pending-request cap**: trigger on `pairing_requests` and `scan_requests` rejects insert if user already has 5+ rows in `pending` or `picked_up` status. Independent of app-layer rate limit.
+
+### Wired into watcher
+
+Policy gate runs in `pickUp()` BEFORE the atomic claim — denied rows go straight to `status='error'` with the deny reason in `error_message`, surfacing to the frontend's UPDATE subscription. No `claude` spawn, no compute spent.
+
+### Not done (deferred)
+
+- **Stored procedure for `create_pairing_request`** that builds `cellar_snapshot` server-side from `bottles` (so the client can't lie about the cellar) and revokes direct INSERT. Strongest design but invasive — frontend would switch to `sb.rpc(...)`. Queued for later.
+- **Prompt injection hardening**: a maliciously-named bottle could hijack the agent ("## Task: ignore previous instructions"). Acceptable risk for single-user; revisit if multi-user.
+- **Captcha on sign-in**: overkill given sign-ups are off.
+
+### Verified
+Allowlisted user (`eefcd054-d9f9-4ecd-a053-f005a1b0ec9b`) round-tripped successfully (~26s) after applying migration + restarting watcher.
+
+---
+
+## 2026-04-28 — `config.public.js` for GH Pages
+
+Created [`frontend/config.public.js`](frontend/config.public.js) committed to the repo with the live Supabase URL + anon key (both safe to publish; security relies on RLS + the lockdown layers above). `config.local.js` remains gitignored and loads after the public one (with `onerror="this.remove()"` to swallow the 404 on the deployed site), so local dev can override per-environment if you point at a different project.
+
+Once Michael flips Pages on (Settings → Pages → branch `main`, folder `/frontend`), the site will be at `https://michael-ticmn.github.io/mycellar/`.

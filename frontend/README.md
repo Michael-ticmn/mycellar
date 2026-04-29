@@ -4,19 +4,14 @@ Static HTML/CSS/JS. No build step. Hosted on GitHub Pages once shipped (deferred
 
 ## Local dev
 
-1. **Create a Supabase project** (`cellar27`), apply the migration in `../supabase/migrations/0001_init.sql` via the SQL editor.
-2. **Configure local credentials**:
+1. **Create a Supabase project**, apply the migration in `../supabase/migrations/0001_init.sql` via the SQL editor.
+2. **Configure**: `config.public.js` is committed and ships the live project's URL + anon key. To override for a different project locally, copy `config.local.example.js` → `config.local.js` and edit. `config.local.js` is git-ignored and loads after `config.public.js`, so it wins where both define keys.
+3. **Serve the directory** (any static server works — `file://` won't because of ES modules):
    ```
-   cp config.local.example.js config.local.js
-   ```
-   Open `config.local.js` and paste your project's `SUPABASE_URL` and anon key.
-   `config.local.js` is git-ignored.
-3. **Serve the directory** (any static server works — file:// won't because of ES modules):
-   ```
-   python -m http.server 8000
+   py -m http.server 8000
    # or: npx http-server -p 8000
    ```
-4. Open <http://localhost:8000>, sign up with email/password (Supabase will send a confirmation email unless you've disabled email confirmation in the project's auth settings — for solo dev, disable it).
+4. Open <http://localhost:8000>, sign up with email/password (disable "Confirm email" in Supabase auth settings for dev).
 
 ## Layout
 
@@ -37,9 +32,11 @@ frontend/
 └── views/                  per-route HTML fragments
 ```
 
-## GH Pages deploy (once palette confirmed)
+## GH Pages deploy
 
-Repo settings → Pages → deploy from branch `main`, folder `/frontend`.
-Note that `config.local.js` is git-ignored, so the deployed page will need
-`config.local.js` injected at build time, or `index.html` patched to
-read config from a different source. Decide before flipping the toggle.
+Repo Settings → Pages → Source: deploy from branch `main`, folder `/frontend` → Save.
+GitHub will publish at `https://<user>.github.io/<repo>/`. First deploy takes a couple of minutes.
+
+`config.public.js` provides the Supabase URL + anon key on the deployed site.
+`config.local.js` is gitignored and won't exist on Pages — its 404 is harmless
+(the script tag has `onerror="this.remove()"`).

@@ -26,4 +26,11 @@ export const CONFIG = {
   storageBucket: 'bottle-labels',
   autoInvoke: (process.env.AUTO_INVOKE || 'true').toLowerCase() !== 'false',
   claudeBin: process.env.CLAUDE_BIN || 'claude',
+  // Comma-separated user UUIDs allowed to consume bridge compute.
+  // Empty/unset = open mode (every signed-in user allowed) — only safe
+  // if Supabase "Allow new users to sign up" is OFF.
+  allowedUserIds: new Set(
+    (process.env.ALLOWED_USER_IDS || '')
+      .split(',').map((s) => s.trim()).filter(Boolean)
+  ),
 };

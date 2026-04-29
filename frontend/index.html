@@ -6,8 +6,11 @@
   <meta name="theme-color" content="#1a0f0f" />
   <title>cellar27</title>
   <link rel="stylesheet" href="css/styles.css" />
-  <!-- Local config (git-ignored). Copy config.local.example.js → config.local.js. -->
-  <script src="config.local.js"></script>
+  <!-- Public config (committed) sets defaults. config.local.js (gitignored)
+       optionally overrides for local dev — its 404 on the deployed site
+       is harmless. -->
+  <script src="config.public.js"></script>
+  <script src="config.local.js" onerror="this.remove()"></script>
   <!-- Supabase JS v2 from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>

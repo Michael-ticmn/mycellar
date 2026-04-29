@@ -6,6 +6,7 @@ import { CONFIG } from './config.js';
 import { renderPairingRequest, renderScanRequest } from './render.js';
 import { parsePairingResponse, parseScanResponse } from './parse.js';
 import { invokeBridgeAgent } from './agent.js';
+import { denyReason } from './policy.js';
 
 const log = (...args) => console.log(new Date().toISOString(), ...args);
 const err = (...args) => console.error(new Date().toISOString(), ...args);
@@ -71,6 +72,19 @@ function subscribeScanRequests() {
 }
 
 async function pickUp(table, row) {
+  // Policy gate: allowlist + per-user rate limit. Reject pre-claim so
+  // the request shows status=error to the client immediately, without
+  // spawning claude.
+  const denied = denyReason(row.user_id);
+  if (denied) {
+    log(`policy deny ${table}.${row.id}: ${denied}`);
+    await sb.from(table).update({
+      status: 'error',
+      error_message: `policy: ${denied}`,
+    }).eq('id', row.id).eq('status', 'pending');
+    return;
+  }
+
   // Re-check + atomically claim with status='picked_up' to avoid double-processing.
   const { data: claimed, error: claimErr } = await sb.from(table)
     .update({ status: 'picked_up', picked_up_at: new Date().toISOString() })
