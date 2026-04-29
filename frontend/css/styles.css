@@ -17,6 +17,7 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+[hidden] { display: none !important; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -38,6 +39,7 @@ a:hover { text-decoration: underline; }
   background: var(--surface);
   border-bottom: 1px solid var(--accent);
   position: sticky; top: 0; z-index: 10;
+  flex-wrap: wrap;
 }
 .brand {
   font-family: var(--serif);
@@ -45,17 +47,21 @@ a:hover { text-decoration: underline; }
   font-weight: 600;
   color: var(--text);
   letter-spacing: 0.02em;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .brand .num { color: var(--accent-2); }
-.topbar nav { display: flex; gap: 0.25rem; flex-wrap: wrap; flex: 1; }
+.topbar nav { display: flex; gap: 0.25rem; flex-wrap: wrap; flex: 1; min-width: 0; }
 .topbar nav a {
   padding: 0.4rem 0.75rem;
   border-radius: var(--radius);
   color: var(--text);
+  white-space: nowrap;
 }
 .topbar nav a:hover { background: var(--surface-2); text-decoration: none; }
 .topbar nav a.active { background: var(--accent); color: var(--text); }
-.userbox { display: flex; align-items: center; gap: 0.5rem; }
+.userbox { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+.userbox #user-email { font-size: 0.85rem; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Main */
 main { max-width: var(--maxw); margin: 0 auto; padding: 1.25rem 1rem 4rem; }

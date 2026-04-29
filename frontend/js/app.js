@@ -22,8 +22,10 @@ async function loadView(name) {
   return res.ok ? res.text() : `<p>View not found: ${name}</p>`;
 }
 
-async function render() {
-  const session = await getSession();
+async function render(providedSession) {
+  // Use session passed by auth listener if available (avoids a Supabase v2 lock
+  // deadlock when called from inside onAuthStateChange); otherwise fetch it.
+  const session = providedSession !== undefined ? providedSession : await getSession();
   if (!session) {
     renderAuth();
     return;
@@ -196,15 +198,29 @@ function wireAuth() {
   $('#signin-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    try { await signIn(fd.get('email'), fd.get('password')); }
-    catch (err) { $('#auth-error').textContent = err.message; }
+    try {
+      await signIn(fd.get('email'), fd.get('password'));
+      await render();
+    } catch (err) {
+      $('#auth-error').textContent = err.message;
+    }
   });
   $('#signup-btn').addEventListener('click', async () => {
     const email = $('#signin-form').email.value;
     const pw    = $('#signin-form').password.value;
-    if (!email || !pw) { $('#auth-error').textContent = 'Email + password required to sign up.'; return; }
-    try { await signUp(email, pw); }
-    catch (err) { $('#auth-error').textContent = err.message; }
+    if (!email || !pw) { $('#auth-error').textContent = 'Email + password required.'; return; }
+    $('#auth-error').textContent = '';
+    try {
+      await signUp(email, pw);
+    } catch (err) {
+      // If account already exists, transparently fall through to sign in.
+      if (/already registered|already exists|user_already_exists/i.test(err.message)) {
+        try { await signIn(email, pw); await render(); }
+        catch (signInErr) { $('#auth-error').textContent = signInErr.message; }
+      } else {
+        $('#auth-error').textContent = err.message;
+      }
+    }
   });
   $('#signout-btn').addEventListener('click', () => signOut());
 }
@@ -231,7 +247,8 @@ function escapeHtml(s) {
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────
-window.addEventListener('hashchange', render);
-onAuthChange(() => render());
+window.addEventListener('hashchange', () => render());
+// Defer to next tick — Supabase v2 listener must not call SDK methods synchronously.
+onAuthChange((session) => setTimeout(() => render(session), 0));
 wireAuth();
 render();
