@@ -91,39 +91,59 @@ completed: <ISO timestamp>
 `;
 }
 
-export function renderScanRequest(row, imagePath, respondToPath) {
+// images: array of { label: 'front'|'back'|..., path: '<absolute local path>' }
+// existingBottle: only set for intent='enrich' (DB row, AI uses for context)
+export function renderScanRequest(row, images, respondToPath, existingBottle = null) {
   const fm = `---
 request_id: ${row.id}
 type: scan
 intent: ${row.intent}
 created: ${ISO(row.created_at)}
-image_path: ${imagePath}
 respond_to: ${respondToPath}
 ---`;
 
-  const contextStr = row.context ? JSON.stringify(row.context, null, 2) : 'none';
+  const imagesSection = (images || []).length
+    ? '## Images\n' + images.map((img) => `- **${img.label}**: \`${img.path}\``).join('\n')
+    : '## Images\n_(none — enrichment-only)_';
+
+  const contextStr = row.context ? JSON.stringify(row.context, null, 2) : null;
+  const contextSection = contextStr
+    ? `## Context\n\`\`\`json\n${contextStr}\n\`\`\``
+    : '## Context\n_(none)_';
+
   const cellarSection = row.intent === 'pour'
-    ? `\n## Cellar\n${bottlesTable(row.cellar_snapshot, false)}\n`
+    ? `## Cellar\n${bottlesTable(row.cellar_snapshot, false)}\n`
     : '';
 
-  const taskAdd = `For intent=add: extract structured wine metadata from the label image. Be honest about confidence — if a field isn't visible or you can't read it, return null and explain in narrative.`;
-  const taskPour = `For intent=pour: identify the bottle in the image and match it to a row in the cellar table above. If multiple cellar rows could match, return all candidates with confidences.`;
-  const task = row.intent === 'add' ? taskAdd : taskPour;
+  const bottleSection = (row.intent === 'enrich' && existingBottle)
+    ? `## Bottle to enrich\n\`\`\`json\n${JSON.stringify(existingBottle, null, 2)}\n\`\`\`\n`
+    : '';
+
+  let task;
+  if (row.intent === 'add') {
+    task = `Extract structured wine metadata from the label image(s) AND produce rich enrichment (tasting notes, food pairings, producer background, drinking window rationale, serving recommendations). Use the back label if provided — it usually has tech sheet info (alcohol, blend %, winemaker notes). Be honest about extraction confidence: if a field isn't visible, return null. Enrichment may draw on your knowledge of the producer/region but should align with what the labels actually show.`;
+  } else if (row.intent === 'pour') {
+    task = `Identify the bottle in the image(s) and match it to a row in the cellar table above. If multiple cellar rows could match, return all candidates with confidences. Use both front and back labels if provided.`;
+  } else if (row.intent === 'enrich') {
+    task = `Produce rich enrichment for the bottle described in "Bottle to enrich". Include tasting notes, food pairings, producer background, drinking window rationale, and serving recommendations. Use your knowledge of the producer/region/varietal.`;
+  } else {
+    task = `Unknown intent: ${row.intent}`;
+  }
 
   return `${fm}
 
 # cellar27 scan request
 
-## Image
-View the file at \`image_path\` above. It's a photo of a wine bottle label.
+${imagesSection}
 
-## Context
-${typeof contextStr === 'string' && contextStr !== 'none' ? '```json\n' + contextStr + '\n```' : contextStr}
-${cellarSection}
-## Task
+${contextSection}
+
+${cellarSection}${bottleSection}## Task
 ${task}
 
 ## Response format
+
+Write the response file at the path in \`respond_to\` with the following structure. Each block is JSON inside a fenced code block; use \`null\` for sections that don't apply to this intent.
 
 \`\`\`markdown
 ---
@@ -131,28 +151,50 @@ request_id: ${row.id}
 completed: <ISO timestamp>
 ---
 
-## Extracted (intent=add only)
-producer: <text or null>
-wine_name: <text or null>
-varietal: <text or null>           # single varietal name; for blends use "Red Blend" / "White Blend"
-blend_components: <yaml list or null>
-vintage: <int or null>
-region: <text or null>
-country: <text or null>
-style: <one of light_red|medium_red|full_red|light_white|full_white|rose|sparkling|dessert|fortified or null>
-sweetness: <bone_dry|dry|off_dry|sweet or null>
-body: <1-5 or null>
-confidence: high | medium | low
+## Extracted
+(intent=add only — null otherwise)
+\`\`\`json
+{
+  "producer": "...",
+  "wine_name": "...",
+  "varietal": "...",
+  "blend_components": [{"varietal": "...", "pct": 60}],
+  "vintage": 2018,
+  "region": "...",
+  "country": "...",
+  "style": "light_red|medium_red|full_red|light_white|full_white|rose|sparkling|dessert|fortified",
+  "sweetness": "bone_dry|dry|off_dry|sweet",
+  "body": 4,
+  "confidence": "high|medium|low"
+}
+\`\`\`
 
-## Match (intent=pour only)
-matched_bottle_id: <uuid or null>
-match_candidates:
-  - bottle_id: <uuid>
-    confidence: high | medium | low
-    reasoning: <1 sentence>
+## Match
+(intent=pour only — null otherwise)
+\`\`\`json
+{
+  "matched_bottle_id": "<uuid or null>",
+  "match_candidates": [
+    { "bottle_id": "<uuid>", "confidence": "high|medium|low", "reasoning": "..." }
+  ]
+}
+\`\`\`
+
+## Details
+(intent=add or enrich — null for pour)
+\`\`\`json
+{
+  "tasting_notes": { "aroma": "...", "palate": "...", "finish": "..." },
+  "food_pairings": ["...", "..."],
+  "producer_background": "...",
+  "region_context": "...",
+  "drinking_window_rationale": "...",
+  "serving": { "temp_celsius": 16, "decant_minutes": 30, "glass": "..." }
+}
+\`\`\`
 
 ## Narrative
-<markdown — what you see on the label, what was hard to read, why you chose what you chose>
+<markdown — what you see on the label(s), what was hard to read, the thoughtful summary>
 \`\`\`
 `;
 }

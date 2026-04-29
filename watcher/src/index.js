@@ -101,15 +101,40 @@ async function pickUp(table, row) {
     await writeFile(reqPath, body, 'utf8');
     log(`wrote pairing request ${reqPath}`);
   } else if (table === 'scan_requests') {
-    const ext = extname(claimed.image_path) || '.jpg';
-    const localImage = join(CONFIG.dirs.images, `${claimed.id}${ext}`);
-    await downloadImage(claimed.image_path, localImage);
     const fileName = `scan-${claimed.id}.md`;
     const respondTo = join(CONFIG.dirs.responses, fileName);
-    const body = renderScanRequest(claimed, localImage, respondTo);
+
+    // Download all images (front, back, etc) to local paths the agent can read.
+    const paths = Array.isArray(claimed.image_paths) ? claimed.image_paths : [];
+    const images = [];
+    for (let i = 0; i < paths.length; i++) {
+      const storagePath = paths[i];
+      const ext = extname(storagePath) || '.jpg';
+      // Convention: paths are uploaded as ".../scan-<uuid>-<label>.jpg".
+      // Extract the label from the basename if present, else fall back to index.
+      const baseLabel = basename(storagePath, ext).split('-').pop();
+      const label = ['front', 'back', 'side', 'top'].includes(baseLabel) ? baseLabel : `image${i + 1}`;
+      const localImage = join(CONFIG.dirs.images, `${claimed.id}-${label}${ext}`);
+      await downloadImage(storagePath, localImage);
+      images.push({ label, path: localImage });
+    }
+
+    // For 'enrich' intent, optionally fetch the bottle row to give the agent context.
+    let existingBottle = null;
+    if (claimed.intent === 'enrich' && claimed.context?.bottle_id) {
+      const { data, error: bErr } = await sb
+        .from('bottles')
+        .select('id, producer, wine_name, varietal, blend_components, vintage, region, country, style, sweetness, body, drink_window_start, drink_window_end, notes')
+        .eq('id', claimed.context.bottle_id)
+        .maybeSingle();
+      if (bErr) throw bErr;
+      existingBottle = data;
+    }
+
+    const body = renderScanRequest(claimed, images, respondTo, existingBottle);
     reqPath = join(CONFIG.dirs.requests, fileName);
     await writeFile(reqPath, body, 'utf8');
-    log(`wrote scan request ${reqPath} (image @ ${localImage})`);
+    log(`wrote scan request ${reqPath} (intent=${claimed.intent}, images=${images.length})`);
   }
 
   if (reqPath) invokeBridgeAgent(reqPath);
@@ -169,9 +194,18 @@ async function ingestScanResponse(path) {
   const requestId = parsed.frontmatter.request_id;
   if (!requestId) throw new Error(`no request_id in ${path}`);
 
+  // scan_responses doesn't have a `details` column yet — pack details into
+  // `extracted` for add intents, into `match_candidates` slot? No — cleaner:
+  // merge extracted+details into extracted for add (frontend will split them
+  // back out), or store details under extracted.details. Use the latter.
+  let extracted = parsed.extracted;
+  if (parsed.details) {
+    extracted = { ...(extracted || {}), details: parsed.details };
+  }
+
   const { error: insErr } = await sb.from('scan_responses').insert({
     request_id: requestId,
-    extracted: parsed.extracted,
+    extracted,
     matched_bottle_id: parsed.matched_bottle_id,
     match_candidates: parsed.match_candidates,
     narrative: parsed.narrative,

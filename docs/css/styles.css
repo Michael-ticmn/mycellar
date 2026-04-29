@@ -172,6 +172,76 @@ input:focus, select:focus, textarea:focus {
 }
 #toast button { padding: 0.25rem 0.65rem; font-size: 0.85rem; }
 
+/* Bottle card hover/focus when clickable */
+.bottle-card[data-bottle-id] { cursor: pointer; transition: transform 0.1s, box-shadow 0.1s; }
+.bottle-card[data-bottle-id]:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+.bottle-card[data-bottle-id]:focus { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+
+/* Scan view — camera + review */
+.scan-view { max-width: 640px; margin: 0 auto; }
+.scan-stage-pane { display: grid; gap: 1rem; }
+.scan-camera {
+  background: #000;
+  border-radius: var(--radius);
+  overflow: hidden;
+  aspect-ratio: 3 / 4;
+  display: grid; place-items: center;
+}
+.scan-camera video {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.scan-preview-img {
+  width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  background: #000;
+  border-radius: var(--radius);
+}
+.scan-prompt { text-align: center; }
+
+/* Bottle detail view */
+.bottle-detail { max-width: 720px; margin: 0 auto; }
+.bottle-detail-back { margin-bottom: 1rem; }
+.bottle-detail-back a { color: var(--muted); }
+.bottle-detail-card {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  display: grid;
+  gap: 1.25rem;
+}
+.bottle-detail-photos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+.bottle-detail-photos img {
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  background: #000;
+  border-radius: var(--radius);
+}
+.bottle-detail-card header h1 { font-size: 1.6rem; margin: 0; }
+.bottle-stats {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 1rem; row-gap: 0.4rem;
+  margin: 0;
+  font-size: 0.95rem;
+}
+.bottle-stats dt { color: var(--muted); }
+.bottle-stats dd { margin: 0; }
+.bottle-details-section h2 { color: var(--highlight); margin-bottom: 0.5rem; }
+.narrative h3 { margin-top: 1rem; margin-bottom: 0.25rem; color: var(--highlight); font-size: 1.05rem; }
+.narrative dl { display: grid; grid-template-columns: max-content 1fr; column-gap: 1rem; row-gap: 0.3rem; margin: 0.25rem 0; }
+.narrative dt { color: var(--muted); }
+.narrative dd { margin: 0; }
+.narrative ul { margin: 0.25rem 0; padding-left: 1.2rem; }
+
 /* Phase placeholders */
 .placeholder-view {
   background: var(--surface);

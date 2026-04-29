@@ -1,5 +1,49 @@
-<section class="placeholder-view">
-  <h2>Scan</h2>
-  <p>Camera capture (label scan → AI extraction → review → save) lands in <strong>Phase 3</strong>.</p>
-  <p>For now, <a href="#/add">add bottles manually</a>.</p>
+<section class="scan-view" id="scan-view" data-stage="intent">
+
+  <div class="scan-stage-pane" data-pane="intent">
+    <h1>Scan</h1>
+    <p class="muted">Use the camera to add a new bottle, or identify what you're pouring.</p>
+    <div class="row">
+      <button data-action="start-add">Add new bottle</button>
+      <button data-action="start-pour" class="ghost">Pour from cellar</button>
+    </div>
+  </div>
+
+  <div class="scan-stage-pane" data-pane="capture" hidden>
+    <p class="muted scan-prompt">Snap the front label</p>
+    <div class="scan-camera">
+      <video id="scan-video" playsinline muted></video>
+    </div>
+    <div class="row">
+      <button data-action="capture">Capture</button>
+      <button data-action="cancel" class="ghost">Cancel</button>
+    </div>
+  </div>
+
+  <div class="scan-stage-pane" data-pane="review" hidden>
+    <p class="muted scan-prompt">Use this shot?</p>
+    <img id="scan-preview" class="scan-preview-img" alt="Preview of captured photo" />
+    <div class="row" id="scan-review-actions"></div>
+  </div>
+
+  <div class="scan-stage-pane" data-pane="uploading" hidden>
+    <p class="muted">Uploading…</p>
+  </div>
+
+  <div class="scan-stage-pane" data-pane="waiting" hidden>
+    <p class="muted">Identifying… (typically 20–40s on the bridge)</p>
+  </div>
+
+  <div class="scan-stage-pane" data-pane="result" hidden>
+    <div id="scan-result"></div>
+  </div>
+
+  <div class="scan-stage-pane" data-pane="error" hidden>
+    <p class="error" id="scan-error"></p>
+    <div class="row">
+      <button data-action="restart">Try again</button>
+      <a href="#/cellar" class="btn ghost" style="display:inline-block; padding:0.5rem 1rem; border:1px solid var(--surface-2); border-radius:var(--radius);">Back to cellar</a>
+    </div>
+  </div>
+
 </section>
