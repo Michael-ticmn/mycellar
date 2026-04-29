@@ -1,5 +1,5 @@
 import { getSession, signIn, signUp, signOut, onAuthChange } from './auth.js';
-import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, updateBottle } from './bottles.js';
+import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, updateBottle, findDuplicate } from './bottles.js';
 import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
 import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } from './pairings.js';
 import {
@@ -503,7 +503,32 @@ function wireAddReviewForm(rootEl, imagePaths, details) {
     input.label_image_path = imagePaths.find((p) => /-front\.jpg$/i.test(p)) || imagePaths[0] || null;
     input.back_image_path = imagePaths.find((p) => /-back\.jpg$/i.test(p)) || null;
     input.details = details || null;
+
     try {
+      // Different vintage is treated as a different bottle (per spec).
+      const dupe = await findDuplicate({
+        producer: input.producer, wine_name: input.wine_name,
+        vintage: input.vintage, varietal: input.varietal,
+      });
+
+      if (dupe) {
+        const desc = `${dupe.producer}${dupe.wine_name ? ' · ' + dupe.wine_name : ''}${dupe.vintage ? ' ' + dupe.vintage : ''}`;
+        const merge = confirm(
+          `You already have ${dupe.quantity}× of "${desc}".\n\nOK = add to existing (${dupe.quantity + 1} total).\nCancel = save as a separate bottle.`
+        );
+        if (merge) {
+          // Increment, and opportunistically fill in missing photos / details.
+          const patch = { quantity: dupe.quantity + 1 };
+          if (!dupe.label_image_path && input.label_image_path) patch.label_image_path = input.label_image_path;
+          if (!dupe.back_image_path  && input.back_image_path)  patch.back_image_path  = input.back_image_path;
+          if (!dupe.details          && input.details)          patch.details          = input.details;
+          await updateBottle(dupe.id, patch);
+          showToast(`Added 1 — ${desc} now ×${dupe.quantity + 1}`);
+          location.hash = `#/bottle/${dupe.id}`;
+          return;
+        }
+      }
+
       const created = await createBottle(input);
       location.hash = `#/bottle/${created.id}`;
     } catch (err) { alert(err.message); }

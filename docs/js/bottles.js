@@ -64,6 +64,27 @@ export async function deleteBottle(id) {
   if (error) throw error;
 }
 
+// Find an existing bottle that's the SAME wine (so a scan-add can offer
+// "increment quantity" instead of creating a duplicate row). Different
+// vintage is treated as a different bottle. Falls back to varietal-match
+// when wine_name is missing on either side.
+export async function findDuplicate({ producer, wine_name, vintage, varietal }) {
+  if (!producer || vintage == null) return null;
+  const norm = (s) => (s || '').trim().toLowerCase();
+  const np = norm(producer);
+  const nw = norm(wine_name);
+  const nv = norm(varietal);
+  const all = await listBottles();
+  return all.find((b) => {
+    if (norm(b.producer) !== np) return false;
+    if (b.vintage !== vintage) return false; // different year = different bottle
+    const bw = norm(b.wine_name);
+    if (nw && bw) return nw === bw;
+    if (!nw && !bw) return norm(b.varietal) === nv;
+    return false; // one has wine_name, other doesn't — treat as different
+  }) || null;
+}
+
 // Tap-to-pour: -1 with quantity floor of 0.
 export async function pourBottle(id) {
   const b = await getBottle(id);
