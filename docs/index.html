@@ -16,6 +16,8 @@
   <meta name="mobile-web-app-capable" content="yes" />
 
   <link rel="stylesheet" href="css/styles.css" />
+  <!-- Version: single source for app + SW. Bumping forces an update. -->
+  <script src="version.js"></script>
   <!-- Public config (committed) sets defaults. config.local.js (gitignored)
        optionally overrides for local dev — its 404 on the deployed site
        is harmless. -->
@@ -37,6 +39,7 @@
     </nav>
     <span class="userbox">
       <span id="user-email" class="muted"></span>
+      <span id="version-tag" class="muted"></span>
       <button id="signout-btn" class="ghost">Sign out</button>
     </span>
   </header>

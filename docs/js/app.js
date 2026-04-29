@@ -351,10 +351,39 @@ onAuthChange((session) => setTimeout(() => render(session), 0));
 wireAuth();
 render();
 
-// PWA service worker registration. No-op on http://192.168.x.x (SW requires
-// HTTPS or localhost), so LAN-served instances just skip silently.
+// Render version tag in topbar (shown in both auth + signed-in views).
+const versionTag = document.getElementById('version-tag');
+if (versionTag && self.CELLAR_VERSION) versionTag.textContent = `v${self.CELLAR_VERSION}`;
+
+// PWA service worker registration + auto-update.
+//
+// Mechanism: bumping docs/version.js changes sw.js bytes (via importScripts),
+// so the browser treats sw.js as a new SW → install (skipWaiting) → activate
+// (claim) → controllerchange fires here → reload page so the new shell takes
+// effect. Visibility change triggers an update check so reopening the PWA
+// from background catches new versions promptly.
+//
+// No-op on http://192.168.x.x (SW requires HTTPS or localhost).
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW register failed:', e));
+  window.addEventListener('load', async () => {
+    try {
+      const reg = await navigator.serviceWorker.register('sw.js');
+
+      // First-time install also fires controllerchange. Only auto-reload on
+      // subsequent changes (i.e. when there was already a controller).
+      let hadController = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController) { hadController = true; return; }
+        console.log('[cellar27] SW updated, reloading');
+        window.location.reload();
+      });
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+      setInterval(() => reg.update().catch(() => {}), 30 * 60 * 1000);
+    } catch (e) {
+      console.warn('[cellar27] SW register failed:', e);
+    }
   });
 }
