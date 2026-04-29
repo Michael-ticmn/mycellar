@@ -10,6 +10,10 @@ This repo is a monorepo:
 | [`watcher/`](watcher/) | Node service that bridges Supabase ↔ Claude Code | live |
 | [`supabase/migrations/`](supabase/migrations/) | SQL migrations for the Supabase project | 0002 applied |
 
+## Architecture
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — one-page picture of how a request travels from phone → Supabase → laptop → Claude → back
+
 ## Planning docs
 
 - [STRATEGY.md](STRATEGY.md) — direction, decisions, constraints
