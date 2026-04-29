@@ -56,6 +56,30 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  // HTML / views → network-first. Means a content tweak shows up immediately
+  // on the next view load without waiting for a SW activation cycle. Falls
+  // back to cache for offline.
+  const isHTML = request.destination === 'document'
+              || /\.(html|webmanifest)$/i.test(url.pathname)
+              || url.pathname.endsWith('/');
+  if (isHTML) {
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(request);
+        if (res && res.status === 200) {
+          const copy = res.clone();
+          caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy)).catch(() => {});
+        }
+        return res;
+      } catch {
+        const cached = await caches.match(request);
+        return cached || Response.error();
+      }
+    })());
+    return;
+  }
+
+  // Everything else (JS, CSS, icons, …) → cache-first, keyed by CACHE_VERSION.
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
