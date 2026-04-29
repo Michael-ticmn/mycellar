@@ -1,0 +1,26 @@
+{
+  "name": "cellar27",
+  "short_name": "cellar27",
+  "description": "Personal wine cellar — catalog, pairings, tasting flights, drink-by tracking.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#1a0f0f",
+  "background_color": "#1a0f0f",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

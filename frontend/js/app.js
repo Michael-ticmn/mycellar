@@ -350,3 +350,11 @@ window.addEventListener('hashchange', () => render());
 onAuthChange((session) => setTimeout(() => render(session), 0));
 wireAuth();
 render();
+
+// PWA service worker registration. No-op on http://192.168.x.x (SW requires
+// HTTPS or localhost), so LAN-served instances just skip silently.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW register failed:', e));
+  });
+}

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Maskable icon: keep important content within the inner 80% safe zone (centered, ~410px). -->
+  <rect width="512" height="512" fill="#8b1a1a"/>
+  <g font-family="'Cormorant Garamond', Georgia, serif" font-weight="600" text-anchor="middle" fill="#f5e6d3">
+    <text x="256" y="320" font-size="220" letter-spacing="2">27</text>
+  </g>
+</svg>
