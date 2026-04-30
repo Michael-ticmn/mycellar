@@ -1055,6 +1055,12 @@ function escapeHtml(s) {
 function escapeAttr(s) { return escapeHtml(s); }
 
 // ── Bootstrap ─────────────────────────────────────────────────────
+{
+  // Expose version in the topbar so we can eyeball whether the SW has
+  // swapped to a new build yet.
+  const versionEl = document.getElementById('app-version');
+  if (versionEl && self.CELLAR_VERSION) versionEl.textContent = `v${self.CELLAR_VERSION}`;
+}
 window.addEventListener('hashchange', () => render());
 onAuthChange((session) => setTimeout(() => render(session), 0));
 wireAuth();

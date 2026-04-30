@@ -51,6 +51,15 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .brand .num { color: var(--accent-2); }
+.brand .version {
+  font-family: var(--sans);
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 0.4rem;
+  letter-spacing: 0;
+  vertical-align: middle;
+}
 .topbar nav { display: flex; gap: 0.25rem; flex-wrap: wrap; flex: 1; min-width: 0; }
 .topbar nav a {
   padding: 0.4rem 0.75rem;
