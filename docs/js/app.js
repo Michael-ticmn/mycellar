@@ -1073,7 +1073,12 @@ render();
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
-      const reg = await navigator.serviceWorker.register('sw.js');
+      // updateViaCache:'none' makes the browser bypass HTTP cache for sw.js
+      // AND its importScripts (i.e. version.js) on every update check.
+      // Without it (default 'imports'), version.js is read from HTTP cache
+      // and the SW update check sees no change — users were having to clear
+      // browsing data to pick up new builds.
+      const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
       let hadController = !!navigator.serviceWorker.controller;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (!hadController) { hadController = true; return; }
