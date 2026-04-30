@@ -1,4 +1,4 @@
-import { getSession, signIn, signUp, signOut, onAuthChange } from './auth.js';
+import { getSession, signIn, signUp, onAuthChange } from './auth.js';
 import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, updateBottle, findDuplicate } from './bottles.js';
 import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
 import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } from './pairings.js';
@@ -1021,7 +1021,6 @@ function wireAuth() {
       }
     }
   });
-  $('#signout-btn').addEventListener('click', () => signOut());
 }
 
 // ── Lightbox (tap photo → fullscreen) ─────────────────────────────

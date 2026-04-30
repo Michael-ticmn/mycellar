@@ -72,7 +72,6 @@ a:hover { text-decoration: underline; }
 .topbar nav a.active { background: var(--accent); color: var(--text); }
 .userbox { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
 .userbox #user-email { font-size: 0.85rem; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#signout-btn .short { display: none; }
 
 /* Main */
 main { max-width: var(--maxw); margin: 0 auto; padding: 1.25rem 1rem 4rem; }
@@ -356,9 +355,6 @@ input:focus, select:focus, textarea:focus {
   }
   .userbox { gap: 0.3rem; }
   .userbox #user-email { display: none; }
-  #signout-btn { padding: 0.3rem 0.5rem; font-size: 0.78rem; }
-  #signout-btn .long { display: none; }
-  #signout-btn .short { display: inline; }
 
   main { padding: 1rem 0.75rem 4rem; }
   h1 { font-size: 1.6rem; }
