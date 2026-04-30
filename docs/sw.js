@@ -38,8 +38,15 @@ self.addEventListener('install', (event) => {
   // 'waiting' state so the page can show an "Update ready" banner. The
   // page sends a 'skipWaiting' message on user tap, which is handled
   // by the message listener below.
+  //
+  // cache:'reload' on each Request forces the install fetch to bypass
+  // the browser's HTTP cache. Without it, addAll happily caches stale
+  // bytes that the browser had from a prior visit — symptom is "new
+  // version label, but CSS/view changes haven't taken effect."
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(SHELL))
+    caches.open(CACHE_VERSION).then((cache) =>
+      cache.addAll(SHELL.map((url) => new Request(url, { cache: 'reload' })))
+    )
   );
 });
 
