@@ -423,12 +423,35 @@ function narrativeBlockHTML(text, opts = {}) {
   return `<section class="narrative-block"${wrapStyle ? ` style="${wrapStyle}"` : ''}>${headHTML}<div class="narrative">${markdownLite(text)}</div></section>`;
 }
 function speakBtnHTML() {
-  return `<button type="button" class="narrative-speak" data-speak-target aria-label="Read aloud" title="Read aloud">
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-      <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"
-            d="M5 9 h3 l5 -4 v14 l-5 -4 h-3 z M16 9 a3 3 0 0 1 0 6 M18 7 a6 6 0 0 1 0 10" />
-    </svg>
-  </button>`;
+  return `<span class="speak-control">
+    <button type="button" class="narrative-speak" data-speak-target aria-label="Read aloud" title="Read aloud">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+        <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"
+              d="M5 9 h3 l5 -4 v14 l-5 -4 h-3 z M16 9 a3 3 0 0 1 0 6 M18 7 a6 6 0 0 1 0 10" />
+      </svg>
+    </button>
+    <button type="button" class="narrative-voice-toggle" data-voice-toggle aria-label="Voice settings" title="Voice settings">
+      <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false">
+        <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 9 l6 6 l6 -6" />
+      </svg>
+    </button>
+  </span>`;
+}
+
+// Voice + rate persistence + cache.
+const VOICE_KEY = 'cellar27.voiceURI';
+const RATE_KEY  = 'cellar27.voiceRate';
+let _voices = [];
+function loadVoices() { _voices = window.speechSynthesis?.getVoices() || []; }
+loadVoices();
+window.speechSynthesis?.addEventListener?.('voiceschanged', () => {
+  loadVoices();
+  // If the picker is open, refresh its list so newly-loaded voices appear.
+  if (!$('#voice-picker')?.hidden) renderVoiceList();
+});
+function getSavedRate() {
+  const r = parseFloat(localStorage.getItem(RATE_KEY));
+  return (r >= 0.5 && r <= 2) ? r : 0.95;
 }
 
 let _speakingBtn = null;
@@ -442,7 +465,12 @@ function toggleSpeak(text, btn) {
     if (wasThis) return; // just stop
   }
   const utter = new SpeechSynthesisUtterance(text);
-  utter.rate = 0.95;
+  utter.rate = getSavedRate();
+  const wantedURI = localStorage.getItem(VOICE_KEY);
+  if (wantedURI) {
+    const v = _voices.find((x) => x.voiceURI === wantedURI);
+    if (v) utter.voice = v;
+  }
   const clear = () => {
     btn.classList.remove('speaking');
     if (_speakingBtn === btn) _speakingBtn = null;
@@ -463,11 +491,105 @@ document.addEventListener('click', (e) => {
   const text = narrEl?.textContent?.trim();
   if (text) toggleSpeak(text, btn);
 });
-// Stop on navigation so a half-read narrative doesn't keep talking.
+// Stop on navigation so a half-read narrative doesn't keep talking;
+// also close the voice picker.
 window.addEventListener('hashchange', () => {
   if (window.speechSynthesis?.speaking) window.speechSynthesis.cancel();
   if (_speakingBtn) { _speakingBtn.classList.remove('speaking'); _speakingBtn = null; }
+  closeVoicePicker();
 });
+
+// ── Voice picker ──────────────────────────────────────────────────
+function renderVoiceList() {
+  const list = $('#voice-list');
+  if (!list) return;
+  const enOnly = $('#voice-en-only')?.checked ?? true;
+  const saved = localStorage.getItem(VOICE_KEY);
+  const filtered = (enOnly ? _voices.filter((v) => /^en/i.test(v.lang)) : _voices.slice());
+  // Sort: enhanced/local-service first, then by name.
+  filtered.sort((a, b) => (Number(b.localService) - Number(a.localService)) || a.name.localeCompare(b.name));
+  if (!filtered.length) {
+    list.innerHTML = `<li class="muted" style="padding:.4rem .5rem;">No voices available.</li>`;
+    return;
+  }
+  const savedAvailable = saved && _voices.some((v) => v.voiceURI === saved);
+  const note = saved && !savedAvailable
+    ? `<li class="muted" style="padding:.4rem .5rem; font-size:.8rem;">(Saved voice not available on this device — using default.)</li>`
+    : '';
+  list.innerHTML = note + filtered.map((v) => {
+    const checked = (saved && v.voiceURI === saved) ? 'checked' : '';
+    return `<li><label class="voice-row">
+      <input type="radio" name="voice" value="${escapeAttr(v.voiceURI)}" ${checked} />
+      <span class="voice-name">${escapeHtml(v.name)}</span>
+      <span class="muted voice-lang">${escapeHtml(v.lang)}${v.default ? ' · default' : ''}</span>
+    </label></li>`;
+  }).join('');
+}
+function openVoicePicker(anchorBtn) {
+  const picker = $('#voice-picker');
+  if (!picker) return;
+  // Position relative to the anchor; clamp to viewport.
+  const r = anchorBtn.getBoundingClientRect();
+  picker.hidden = false;
+  // Force-render so we can measure dimensions.
+  const pickerW = Math.min(320, window.innerWidth - 16);
+  picker.style.width = pickerW + 'px';
+  let left = r.right + window.scrollX - pickerW;
+  left = Math.max(8 + window.scrollX, Math.min(left, window.scrollX + window.innerWidth - pickerW - 8));
+  picker.style.left = left + 'px';
+  picker.style.top = (r.bottom + window.scrollY + 6) + 'px';
+  // Hydrate fields from saved state.
+  const enOnly = $('#voice-en-only');
+  if (enOnly) enOnly.checked = true;
+  const rateInput = $('#voice-rate');
+  const rateDisplay = $('#voice-rate-display');
+  if (rateInput && rateDisplay) {
+    const r0 = getSavedRate();
+    rateInput.value = String(r0);
+    rateDisplay.textContent = `${r0.toFixed(2)}×`;
+  }
+  renderVoiceList();
+}
+function closeVoicePicker() {
+  const picker = $('#voice-picker');
+  if (picker && !picker.hidden) picker.hidden = true;
+}
+function mountVoicePicker() {
+  const picker = $('#voice-picker');
+  if (!picker || picker.dataset.wired) return;
+  picker.dataset.wired = '1';
+  $('#voice-picker-close')?.addEventListener('click', closeVoicePicker);
+  $('#voice-en-only')?.addEventListener('change', renderVoiceList);
+  $('#voice-list')?.addEventListener('change', (e) => {
+    const radio = e.target.closest('input[type="radio"][name="voice"]');
+    if (radio?.value) localStorage.setItem(VOICE_KEY, radio.value);
+  });
+  $('#voice-rate')?.addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value);
+    if (!Number.isFinite(v)) return;
+    localStorage.setItem(RATE_KEY, String(v));
+    const display = $('#voice-rate-display');
+    if (display) display.textContent = `${v.toFixed(2)}×`;
+  });
+  $('#voice-test')?.addEventListener('click', () => {
+    const fakeBtn = $('#voice-test'); // its .speaking class is harmless here
+    toggleSpeak('This is the cellar27 sommelier voice.', fakeBtn);
+  });
+  // Click-outside dismiss.
+  document.addEventListener('click', (e) => {
+    if (picker.hidden) return;
+    if (e.target.closest('#voice-picker')) return;
+    if (e.target.closest('[data-voice-toggle]')) return;
+    closeVoicePicker();
+  });
+  // Caret-button delegate.
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-voice-toggle]');
+    if (!btn) return;
+    if (!picker.hidden) { closeVoicePicker(); return; }
+    openVoicePicker(btn);
+  });
+}
 
 function markdownLite(md) {
   const escaped = escapeHtml(md);
@@ -1204,6 +1326,7 @@ function escapeAttr(s) { return escapeHtml(s); }
   const versionEl = document.getElementById('app-version');
   if (versionEl && self.CELLAR_VERSION) versionEl.textContent = `v${self.CELLAR_VERSION}`;
 }
+mountVoicePicker();
 window.addEventListener('hashchange', () => render());
 onAuthChange((session) => setTimeout(() => render(session), 0));
 wireAuth();

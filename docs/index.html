@@ -90,6 +90,25 @@
 
   <div id="toast" hidden></div>
 
+  <div id="voice-picker" hidden role="dialog" aria-label="Read-aloud voice settings">
+    <header class="voice-picker-head">
+      <h3>Read-aloud voice</h3>
+      <button type="button" id="voice-picker-close" class="ghost" aria-label="Close">✕</button>
+    </header>
+    <label class="voice-en-only-row">
+      <input type="checkbox" id="voice-en-only" checked />
+      <span>English voices only</span>
+    </label>
+    <ul id="voice-list" class="voice-list" role="radiogroup" aria-label="Available voices"></ul>
+    <label class="voice-rate-row">
+      <span>Speed <span id="voice-rate-display" class="muted"></span></span>
+      <input type="range" id="voice-rate" min="0.7" max="1.3" step="0.05" />
+    </label>
+    <div class="row voice-picker-actions">
+      <button type="button" id="voice-test">Test</button>
+    </div>
+  </div>
+
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
