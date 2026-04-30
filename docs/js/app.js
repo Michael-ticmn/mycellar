@@ -72,6 +72,10 @@ const STYLE_GROUPS = {
   sweet:     ['dessert', 'fortified'],
 };
 
+const CELLAR_VIEW_KEY = 'cellar27.cellarView';
+const getCellarView = () => localStorage.getItem(CELLAR_VIEW_KEY) === 'card' ? 'card' : 'list';
+const setCellarView = (v) => { try { localStorage.setItem(CELLAR_VIEW_KEY, v); } catch { /* private mode */ } };
+
 async function mountCellar() {
   const grid = $('#cellar-grid');
   if (!grid) return;
@@ -84,10 +88,11 @@ async function mountCellar() {
     return;
   }
 
-  // Filter / sort / search state
+  // Filter / sort / search / view state
   let activeFilter = 'all';
   let sortMode = $('#cellar-sort')?.value || 'recent';
   let searchTerm = '';
+  let viewMode = getCellarView();
 
   const repaint = () => {
     let view = bottles.slice();
@@ -125,11 +130,14 @@ async function mountCellar() {
       grid.innerHTML = '<p class="muted">No bottles match.</p>';
       return;
     }
-    grid.innerHTML = view.map(bottleCardHTML).join('');
-    $$('.bottle-card', grid).forEach((card) => {
-      card.addEventListener('click', (e) => {
+    const builder = viewMode === 'list' ? bottleListRowHTML : bottleCardHTML;
+    grid.innerHTML = view.map(builder).join('');
+    grid.classList.toggle('grid', viewMode === 'card');
+    grid.classList.toggle('cellar-list', viewMode === 'list');
+    $$('[data-bottle-id]', grid).forEach((node) => {
+      node.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
-        const id = card.dataset.bottleId;
+        const id = node.dataset.bottleId;
         if (id) location.hash = `#/bottle/${id}`;
       });
     });
@@ -150,8 +158,47 @@ async function mountCellar() {
       repaint();
     });
   });
+  // View toggle: persist + repaint.
+  const refreshToggleActive = () => {
+    $$('#cellar-view-toggle .view-toggle-btn').forEach((b) =>
+      b.classList.toggle('active', b.dataset.view === viewMode));
+  };
+  refreshToggleActive();
+  $$('#cellar-view-toggle .view-toggle-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const next = btn.dataset.view;
+      if (next === viewMode) return;
+      viewMode = next;
+      setCellarView(next);
+      refreshToggleActive();
+      repaint();
+    });
+  });
 
   repaint();
+}
+
+function bottleListRowHTML(b) {
+  const window = (b.drink_window_start && b.drink_window_end)
+    ? `${b.drink_window_start}–${b.drink_window_end}`
+    : '';
+  const subParts = [
+    escapeHtml(b.varietal),
+    b.vintage ? String(b.vintage) : '',
+    b.region ? escapeHtml(b.region) : '',
+  ].filter(Boolean).join(' · ');
+  return `
+    <article class="bottle-row" data-bottle-id="${b.id}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
+      <div class="bottle-row-main">
+        <h3 class="bottle-row-title">${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
+        <p class="bottle-row-sub muted">${subParts}</p>
+      </div>
+      <div class="bottle-row-aside">
+        <span class="qty">×${b.quantity}</span>
+        ${window ? `<span class="window muted">${window}</span>` : ''}
+      </div>
+      <button class="bottle-row-pour" data-pour="${b.id}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
+    </article>`;
 }
 
 function bottleCardHTML(b) {

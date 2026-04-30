@@ -139,8 +139,9 @@ input:focus, select:focus, textarea:focus {
 }
 .auth-card h1 { font-size: 2rem; }
 
-/* Cellar grid */
-.grid, #cellar-grid {
+/* Cellar grid (only when #cellar-grid has the .grid class — list mode
+   uses .cellar-list instead). */
+.grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 1rem;
@@ -511,3 +512,88 @@ input:focus, select:focus, textarea:focus {
 }
 #update-banner button { padding: 0.3rem 0.7rem; font-size: 0.85rem; }
 #update-banner-dismiss { padding: 0.2rem 0.5rem; line-height: 1; }
+
+/* ── Cellar list view (compact, default) ───────────────────────── */
+.cellar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.bottle-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-left: 4px solid var(--surface-2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  min-width: 0;
+}
+.bottle-row:hover { background: var(--surface-2); }
+.bottle-row-main { min-width: 0; overflow: hidden; }
+.bottle-row-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bottle-row-sub {
+  margin: 0.1rem 0 0;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bottle-row-aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  text-align: right;
+  flex-shrink: 0;
+}
+.bottle-row-aside .qty { color: var(--highlight); font-weight: 600; }
+.bottle-row-pour { padding: 0.35rem 0.7rem; font-size: 0.85rem; flex-shrink: 0; }
+
+/* Per-style left-edge colors (mirrors the gradient palette on cards) */
+.bottle-row[data-style="light_red"]    { border-left-color: #c45050; }
+.bottle-row[data-style="medium_red"]   { border-left-color: #8b1a1a; }
+.bottle-row[data-style="full_red"]     { border-left-color: #5a1212; }
+.bottle-row[data-style="light_white"]  { border-left-color: #f0e8a8; }
+.bottle-row[data-style="full_white"]   { border-left-color: #d8b878; }
+.bottle-row[data-style="rose"]         { border-left-color: #e8a8a8; }
+.bottle-row[data-style="sparkling"]    { border-left-color: #f0e0a0; }
+.bottle-row[data-style="dessert"]      { border-left-color: #d09858; }
+.bottle-row[data-style="fortified"]    { border-left-color: #8a3818; }
+
+/* ── List/Card view toggle in cellar toolbar ───────────────────── */
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.view-toggle-btn {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0.4rem 0.55rem;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.view-toggle-btn:hover { background: var(--surface-2); color: var(--text); }
+.view-toggle-btn.active {
+  background: var(--accent);
+  color: var(--text);
+}
+.view-toggle-btn + .view-toggle-btn { border-left: 1px solid var(--surface-2); }
