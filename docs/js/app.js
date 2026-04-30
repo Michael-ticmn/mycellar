@@ -5,7 +5,7 @@ import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } f
 import {
   startCamera, stopCamera, captureFrame,
   uploadCapture, submitScanRequest, waitForScanResponse,
-  signedUrlForImage, requestEnrichment,
+  subscribeForResponse, signedUrlForImage, requestEnrichment,
 } from './scan.js';
 
 const STYLES = [
@@ -434,6 +434,51 @@ async function mountDrinkNow() {
   ].join('') || '<p class="muted">Nothing to flag right now.</p>';
 }
 
+// ── Scan queue (background, in-memory) ────────────────────────────
+//
+// Multi-bottle add: submit a scan, immediately go back to the intent
+// stage, scan the next one. Each in-flight scan is one entry in
+// scanQueue. The realtime subscription survives navigation because
+// the queue lives at module scope, not inside mountScan's closure.
+//
+// status flow:  pending → ready → reviewing → (removed on Save)
+//                                 ↘ ready (if user navigates back without saving)
+//                       ↘ error
+const MAX_IN_FLIGHT = 5; // matches enforce_pending_scan_cap trigger
+const scanQueue = [];
+const queueListeners = new Set();
+let _scanCounter = 0;
+
+function scanQueueSnapshot() { return scanQueue.slice(); }
+function notifyQueue() { for (const fn of queueListeners) { try { fn(); } catch (e) { console.error(e); } } }
+
+function enqueueAddScan({ imagePaths, request }) {
+  const entry = {
+    requestId: request.id,
+    imagePaths,
+    label: `Bottle ${++_scanCounter}`,
+    status: 'pending',
+    response: null,
+    error: null,
+    unsubscribe: null,
+  };
+  entry.unsubscribe = subscribeForResponse(request.id, {
+    onResponse: (row) => { entry.status = 'ready'; entry.response = row; entry.unsubscribe = null; notifyQueue(); },
+    onError:    (err) => { entry.status = 'error'; entry.error = err.message; entry.unsubscribe = null; notifyQueue(); },
+  });
+  scanQueue.push(entry);
+  notifyQueue();
+  return entry;
+}
+
+function removeScanEntry(requestId) {
+  const i = scanQueue.findIndex((e) => e.requestId === requestId);
+  if (i < 0) return;
+  const [entry] = scanQueue.splice(i, 1);
+  try { entry.unsubscribe?.(); } catch { /* idempotent */ }
+  notifyQueue();
+}
+
 // ── Scan view (orchestrator state machine) ────────────────────────
 function mountScan() {
   const root = $('#scan-view');
@@ -445,10 +490,12 @@ function mountScan() {
   let currentLabel = 'front';  // 'front' | 'back'
   let captures = [];           // [{ label, blob }]
   let lastBlob = null;         // pending review
+  let reviewingEntry = null;   // queue entry whose review form is showing
 
   const setStage = (stage) => {
     root.dataset.stage = stage;
     $$('.scan-stage-pane', root).forEach((p) => { p.hidden = p.dataset.pane !== stage; });
+    renderTray();
   };
   const cleanup = () => { if (stream) { stopCamera(stream); stream = null; } };
   const showError = (msg) => { setStage('error'); $('#scan-error', root).textContent = msg; };
@@ -464,11 +511,79 @@ function mountScan() {
     catch (e) { showError(e.message); }
   };
 
+  // Tray lives in the intent pane; only visible when there's something
+  // pending or ready, and only on the intent stage so it doesn't compete
+  // with the camera/review UIs.
+  function renderTray() {
+    const tray = $('#scan-queue-tray', root);
+    const startBtn = root.querySelector('[data-action="start-add"]');
+    if (!tray) return;
+    const items = scanQueueSnapshot();
+    const showTray = items.length && root.dataset.stage === 'intent';
+    tray.hidden = !showTray;
+    if (startBtn) {
+      const atCap = items.length >= MAX_IN_FLIGHT;
+      startBtn.disabled = atCap;
+      startBtn.title = atCap ? `${MAX_IN_FLIGHT} scans in flight — review one before scanning more.` : '';
+    }
+    if (!showTray) return;
+    tray.innerHTML = items.map((e) => {
+      if (e.status === 'pending') {
+        return `<li class="scan-queue-item is-pending">
+          <span class="scan-queue-spinner" aria-hidden="true"></span>
+          <span class="scan-queue-text">${escapeHtml(e.label)}: identifying…</span>
+        </li>`;
+      }
+      if (e.status === 'ready') {
+        return `<li class="scan-queue-item is-ready">
+          <button class="scan-queue-btn" data-action="review-queued" data-request-id="${escapeAttr(e.requestId)}">
+            ${escapeHtml(e.label)}: ready — tap to review
+          </button>
+        </li>`;
+      }
+      if (e.status === 'error') {
+        return `<li class="scan-queue-item is-error">
+          <span class="scan-queue-text">${escapeHtml(e.label)}: ${escapeHtml(e.error || 'failed')}</span>
+          <button class="ghost scan-queue-dismiss" data-action="dismiss-queued" data-request-id="${escapeAttr(e.requestId)}">Dismiss</button>
+        </li>`;
+      }
+      return ''; // 'reviewing' is hidden from the tray; it's the foreground form
+    }).join('');
+  }
+
+  queueListeners.add(renderTray);
+  // Drop this mount's listener when the user navigates away. Also restore
+  // any entry stuck in 'reviewing' (user navigated away without saving)
+  // back to 'ready' so it stays visible in the tray on return.
+  const onHashChange = () => {
+    if (parseHash().route !== 'scan') {
+      if (reviewingEntry && reviewingEntry.status === 'reviewing') {
+        reviewingEntry.status = 'ready';
+        notifyQueue();
+      }
+      reviewingEntry = null;
+      queueListeners.delete(renderTray);
+      window.removeEventListener('hashchange', onHashChange);
+    }
+  };
+  window.addEventListener('hashchange', onHashChange);
+
   root.addEventListener('click', async (e) => {
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (!action) return;
 
     if (action === 'start-add' || action === 'start-pour') {
+      if (action === 'start-add' && scanQueue.length >= MAX_IN_FLIGHT) {
+        showToast(`${MAX_IN_FLIGHT} scans in flight — review one first.`);
+        return;
+      }
+      // If user was mid-review and started a new scan instead of saving,
+      // bounce that entry back to 'ready' so the tray keeps it visible.
+      if (reviewingEntry && reviewingEntry.status === 'reviewing') {
+        reviewingEntry.status = 'ready';
+        notifyQueue();
+      }
+      reviewingEntry = null;
       intent = action === 'start-add' ? 'add' : 'pour';
       scanId = crypto.randomUUID();
       captures = []; lastBlob = null;
@@ -518,6 +633,21 @@ function mountScan() {
       setStage('intent');
       return;
     }
+    if (action === 'review-queued') {
+      const requestId = e.target.closest('[data-action]').dataset.requestId;
+      const entry = scanQueue.find((x) => x.requestId === requestId);
+      if (!entry || entry.status !== 'ready') return;
+      reviewingEntry = entry;
+      entry.status = 'reviewing';
+      notifyQueue();
+      await renderQueuedReview(entry);
+      return;
+    }
+    if (action === 'dismiss-queued') {
+      const requestId = e.target.closest('[data-action]').dataset.requestId;
+      removeScanEntry(requestId);
+      return;
+    }
     if (action === 'confirm-pour') {
       const bottleId = e.target.closest('[data-action]').dataset.bottleId;
       try {
@@ -536,32 +666,48 @@ function mountScan() {
         const path = await uploadCapture(cap.blob, { scanId, label: cap.label });
         imagePaths.push(path);
       }
-      let cellarSnapshot = null;
       if (intent === 'pour') {
+        // Pour stays single-shot: user wants the answer right now.
         const bottles = await listBottles();
-        cellarSnapshot = bottles.map((b) => ({
+        const cellarSnapshot = bottles.map((b) => ({
           id: b.id, producer: b.producer, wine_name: b.wine_name,
           varietal: b.varietal, vintage: b.vintage, quantity: b.quantity,
         }));
+        const req = await submitScanRequest({ intent, imagePaths, cellarSnapshot });
+        setStage('waiting');
+        const response = await waitForScanResponse(req.id);
+        await renderPourResult(response);
+      } else {
+        // Add intent: enqueue and immediately bounce back to intent so
+        // the user can scan another bottle while this one cooks.
+        const req = await submitScanRequest({ intent, imagePaths });
+        const entry = enqueueAddScan({ imagePaths, request: req });
+        showToast(`${entry.label} sent — scan another or wait for review.`);
+        // Reset transient capture state so the next "Add new bottle" tap is clean.
+        intent = null; captures = []; lastBlob = null;
+        setStage('intent');
       }
-      const req = await submitScanRequest({ intent, imagePaths, cellarSnapshot });
-      setStage('waiting');
-      const response = await waitForScanResponse(req.id);
-      await renderResult(response, imagePaths);
     } catch (err) { showError(err.message); }
   }
 
-  async function renderResult(response, imagePaths) {
+  async function renderQueuedReview(entry) {
     setStage('result');
     const result = $('#scan-result', root);
-    if (intent === 'add') {
-      const ext = response.extracted || {};
-      const details = ext.details || null;
-      result.innerHTML = renderAddReviewHTML(ext, details, imagePaths, response.narrative);
-      wireAddReviewForm(result, imagePaths, details);
-    } else if (intent === 'pour') {
-      result.innerHTML = await renderPourResultHTML(response);
-    }
+    const ext = entry.response?.extracted || {};
+    const details = ext.details || null;
+    result.innerHTML = renderAddReviewHTML(ext, details, entry.imagePaths, entry.response?.narrative);
+    // Wrap the form's submit so we can splice the entry out on success
+    // (whether the user merged into an existing bottle or created new).
+    wireAddReviewForm(result, entry.imagePaths, details, () => {
+      removeScanEntry(entry.requestId);
+      reviewingEntry = null;
+    });
+  }
+
+  async function renderPourResult(response) {
+    setStage('result');
+    const result = $('#scan-result', root);
+    result.innerHTML = await renderPourResultHTML(response);
   }
 }
 
@@ -609,7 +755,7 @@ function renderAddReviewHTML(ext, details, imagePaths, narrative) {
   `;
 }
 
-function wireAddReviewForm(rootEl, imagePaths, details) {
+function wireAddReviewForm(rootEl, imagePaths, details, onSaved = null) {
   const form = $('#scan-add-form', rootEl);
   if (!form) return;
   form.addEventListener('submit', async (e) => {
@@ -640,12 +786,14 @@ function wireAddReviewForm(rootEl, imagePaths, details) {
           if (!dupe.details          && input.details)          patch.details          = input.details;
           await updateBottle(dupe.id, patch);
           showToast(`Added 1 — ${desc} now ×${dupe.quantity + 1}`);
+          onSaved?.();
           location.hash = `#/bottle/${dupe.id}`;
           return;
         }
       }
 
       const created = await createBottle(input);
+      onSaved?.();
       location.hash = `#/bottle/${created.id}`;
     } catch (err) { alert(err.message); }
   });

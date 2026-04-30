@@ -382,3 +382,47 @@ input:focus, select:focus, textarea:focus {
     padding-bottom: max(4rem, env(safe-area-inset-bottom));
   }
 }
+
+/* ── Scan queue tray ───────────────────────────────────────────── */
+.scan-queue-tray {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.scan-queue-item {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.scan-queue-item.is-ready  { border-color: var(--highlight); }
+.scan-queue-item.is-error  { border-color: var(--error); }
+.scan-queue-text { color: var(--muted); flex: 1; }
+.scan-queue-item.is-error .scan-queue-text { color: var(--error); }
+.scan-queue-btn {
+  flex: 1;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--highlight);
+  font: inherit;
+  cursor: pointer;
+}
+.scan-queue-btn:hover { background: transparent; text-decoration: underline; }
+.scan-queue-dismiss { padding: 0.35rem 0.6rem; }
+.scan-queue-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid var(--surface-2);
+  border-top-color: var(--highlight);
+  border-radius: 50%;
+  animation: scan-queue-spin 0.9s linear infinite;
+  flex: 0 0 auto;
+}
+@keyframes scan-queue-spin { to { transform: rotate(360deg); } }

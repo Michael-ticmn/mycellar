@@ -71,29 +71,47 @@ export async function submitScanRequest({ intent, imagePaths, context = null, ce
   return data;
 }
 
-// Subscribe to scan_responses for this request_id; resolve with the response row,
-// reject on error or timeout.
+// Subscribe to a single scan_request's outcome. Calls onResponse(row) when
+// the scan_responses row arrives, or onError(err) if the request transitions
+// to status='error'. Returns an unsubscribe function. Each handler fires at
+// most once. Used by both waitForScanResponse (one-shot await) and the
+// background scan queue in app.js.
+export function subscribeForResponse(requestId, { onResponse, onError }) {
+  let done = false;
+  const finish = (fn, val) => {
+    if (done) return; done = true;
+    try { channel.unsubscribe(); } catch { /* idempotent */ }
+    fn?.(val);
+  };
+  const channel = sb.channel(`scan-resp-${requestId}`)
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'scan_responses', filter: `request_id=eq.${requestId}` },
+      ({ new: row }) => finish(onResponse, row))
+    .on('postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'scan_requests', filter: `id=eq.${requestId}` },
+      ({ new: row }) => { if (row.status === 'error') finish(onError, new Error(row.error_message || 'Scan failed.')); })
+    .subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        // Race protection: if the response already landed before we subscribed.
+        const { data: existing } = await sb.from('scan_responses').select('*').eq('request_id', requestId).maybeSingle();
+        if (existing) finish(onResponse, existing);
+      }
+    });
+  return () => finish(null, null);
+}
+
+// One-shot Promise wrapper: resolve with response row, reject on error/timeout.
+// Used by the pour flow which still blocks the user on a single scan.
 export function waitForScanResponse(requestId, { timeoutMs = 5 * 60_000 } = {}) {
   return new Promise((resolve, reject) => {
-    let done = false;
-    const finish = (fn, val) => {
-      if (done) return; done = true;
-      clearTimeout(timer); channel.unsubscribe(); fn(val);
-    };
-    const timer = setTimeout(() => finish(reject, new Error('Scan timed out (5 min).')), timeoutMs);
-    const channel = sb.channel(`scan-resp-${requestId}`)
-      .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'scan_responses', filter: `request_id=eq.${requestId}` },
-        ({ new: row }) => finish(resolve, row))
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'scan_requests', filter: `id=eq.${requestId}` },
-        ({ new: row }) => { if (row.status === 'error') finish(reject, new Error(row.error_message || 'Scan failed.')); })
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          const { data: existing } = await sb.from('scan_responses').select('*').eq('request_id', requestId).maybeSingle();
-          if (existing) finish(resolve, existing);
-        }
-      });
+    const timer = setTimeout(() => {
+      unsubscribe();
+      reject(new Error('Scan timed out (5 min).'));
+    }, timeoutMs);
+    const unsubscribe = subscribeForResponse(requestId, {
+      onResponse: (row) => { clearTimeout(timer); resolve(row); },
+      onError:    (err) => { clearTimeout(timer); reject(err); },
+    });
   });
 }
 
