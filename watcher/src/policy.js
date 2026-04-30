@@ -6,8 +6,10 @@
 import { CONFIG } from './config.js';
 
 // Sliding-window in-memory rate limit: max N requests per user per WINDOW_MS.
+// Tunable via WATCHER_RATE_LIMIT_PER_HOUR env var. The DB also enforces
+// its own check; this is the redundant backstop.
 const WINDOW_MS = 60 * 60 * 1000; // 1 hour
-const MAX_PER_WINDOW = 20;
+const MAX_PER_WINDOW = parseInt(process.env.WATCHER_RATE_LIMIT_PER_HOUR || '100', 10);
 const hits = new Map(); // user_id → number[] of timestamps
 
 export function isAllowed(userId) {

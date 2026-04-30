@@ -23,7 +23,18 @@ export const CONFIG = {
     images:    join(bridgeDir, 'images'),
   },
   timeoutMinutes: parseInt(process.env.TIMEOUT_MINUTES || '10', 10),
-  maxClaudeCallsPerDay: parseInt(process.env.MAX_CLAUDE_CALLS_PER_DAY || '100', 10),
+  maxClaudeCallsPerDay: parseInt(process.env.MAX_CLAUDE_CALLS_PER_DAY || '250', 10),
+  notify: {
+    // SMTP (Gmail with an App Password works fine; Resend SMTP also fine).
+    // Leave any one of these unset to disable notifications silently.
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.NOTIFY_FROM || process.env.SMTP_USER,
+    to:   process.env.NOTIFY_TO,
+    cooldownMs: parseInt(process.env.NOTIFY_COOLDOWN_MS || `${30 * 60_000}`, 10),
+  },
   storageBucket: 'bottle-labels',
   autoInvoke: (process.env.AUTO_INVOKE || 'true').toLowerCase() !== 'false',
   claudeBin: process.env.CLAUDE_BIN || 'claude',

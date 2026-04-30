@@ -7,11 +7,13 @@ Single source of truth for what's enforced, where, and how to change it. The who
 | Limit | Default | Where enforced | Resets |
 |---|---|---|---|
 | **Allowlist** | members-only | RLS on INSERT (`pairing_requests`, `scan_requests`) | n/a |
-| **Per-user rate limit** | 20 / hour | RLS on INSERT, sliding window | rolling 60 min |
+| **Per-user rate limit (DB)** | 100 / hour | RLS on INSERT, sliding window | rolling 60 min |
+| **Per-user rate limit (watcher)** | 100 / hour | In-memory map, redundant backstop | watcher restart or rolling 60 min |
 | **Concurrent in-flight** | 5 per user | DB trigger on INSERT | as requests complete |
-| **Global daily ceiling** | 100 spawns/day | Watcher → atomic counter | UTC midnight |
+| **Global daily ceiling** | 250 spawns/day | Watcher → atomic counter in `cellar27_watcher_metrics` | UTC midnight |
 | **Request payload size** | 4 KB context, 65 KB snapshot, 4 KB image paths | DB CHECK constraints | n/a |
 | **Stale-claim retry cap** | 2 retries before `error` | DB function called every 2 min | per request |
+| **Email notify on limit hit** | optional, configured via `SMTP_*` env vars | Watcher [`notify.js`](../watcher/src/notify.js) | per-key cooldown (default 30 min) |
 
 The first four are independent gates; a request must pass all of them to spawn Claude.
 
@@ -32,11 +34,11 @@ select id, email from auth.users where email = 'someone@example.com';
 
 **To remove a user:** `delete from cellar27_allowed_users where user_id = '...';`
 
-## Layer 2 — Per-user rate limit
+## Layer 2 — Per-user rate limit (DB)
 
-**Where:** `cellar27_check_rate_limit(p_user_id, p_max=20, p_window_minutes=60)` invoked from the same RLS `WITH CHECK` clause as the allowlist.
+**Where:** `cellar27_check_rate_limit(p_user_id, p_max=100, p_window_minutes=60)` invoked from the same RLS `WITH CHECK` clause as the allowlist. Default raised from 20 → 100 in [`0005_security_tune.sql`](../supabase/migrations/0005_security_tune.sql) so a normal bulk-add session doesn't bottleneck.
 
-**Effect:** 21st combined pairing+scan insert in any rolling 60-minute window fails RLS.
+**Effect:** 101st combined pairing+scan insert in any rolling 60-minute window fails RLS.
 
 **To tune:** edit the function defaults and re-run:
 
@@ -66,6 +68,16 @@ $$;
 **Effect:** 6th simultaneous request whose `status` is `pending` or `picked_up` raises `Too many pending …` and the insert fails. Cap is per-user, per-table.
 
 **To tune:** edit the `cap int := 5;` constant in the trigger function and replace it. The frontend's multi-bottle scan queue UI also gates the "Scan label" button at this same number — search `MAX_IN_FLIGHT` in [`docs/js/app.js`](js/app.js) and update both.
+
+## Layer 3b — Per-user rate limit (watcher in-memory)
+
+**Where:** [`watcher/src/policy.js`](../watcher/src/policy.js) — sliding-window `Map` keyed by `user_id`. Redundant with the DB rate limit; this is the defense-in-depth backstop for cases where the DB layer is bypassed (e.g., service_role inserting on behalf of a user).
+
+**Effect:** Watcher refuses to spawn Claude for the user past the limit; marks the request `status='error'` with `error_message='policy: rate limit: N/M requests in last hour'`.
+
+**To tune:** set `WATCHER_RATE_LIMIT_PER_HOUR=200` in [`watcher/.env`](../watcher/.env.example) and restart the watcher.
+
+**To clear immediately:** restart the watcher (the in-memory map starts fresh).
 
 ## Layer 4 — Global daily Claude ceiling
 
@@ -117,6 +129,18 @@ A 5 MB blob can't make it into the request row.
 - **"Daily AI capacity reached":** bump `MAX_CLAUDE_CALLS_PER_DAY`, restart watcher, and `update cellar27_watcher_metrics set spawn_count = 0 where metric_date = current_date;` if you want today's accounting cleared.
 - **"Too many pending scans (5)":** rare with the multi-bottle queue UI which already gates at 5; if hit, wait for one to complete (`status` flips to `completed` or `error` quickly) or tune the trigger constant.
 - **A user got compromised:** `delete from cellar27_allowed_users where user_id = '...';` is the quickest cut.
+
+## Layer 7 — Email notification on limit hit
+
+**Where:** Watcher [`src/notify.js`](../watcher/src/notify.js), called from `index.js` on policy denial and daily-ceiling refusal.
+
+**Effect:** Sends a plain-text email summarizing the limit hit + the SQL/env tweaks needed to grant more. Per-key cooldown so a runaway loop hitting the same limit can't flood your inbox.
+
+**To enable:** set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `NOTIFY_FROM`, `NOTIFY_TO` in [`watcher/.env`](../watcher/.env.example). Gmail with an App Password (Account Settings → Security → 2FA → App passwords) works; so do Resend / Mailgun / SES SMTP. Leave any blank to disable.
+
+**Cooldown:** `NOTIFY_COOLDOWN_MS` (default 30 min) per limit-key.
+
+This is intentionally informational only — no clickable approve / deny in the email. With the limits raised in v0.8, hitting them should be rare and worth investigating manually rather than rubber-stamping.
 
 ## Verification
 

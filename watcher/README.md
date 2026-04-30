@@ -112,5 +112,23 @@ watcher/
 - **Storage download fails** → the service role key bypasses RLS, but the bucket must exist (`bottle-labels`, created by `supabase/migrations/0001_init.sql`)
 - **Response files aren't being picked up** → check filename prefix. `req-<uuid>.md` for pairing, `scan-<uuid>.md` for scan. Anything else is ignored.
 - **Request stuck in `picked_up`** → `cellar27_sweep_stale_claims` (called every 2 min) resets it to `pending` for up to 2 retries, then sets `error`. Check `error_message` and `retry_count`. `claimed_by` should be the host's hostname; if NULL on a fresh row, the watcher is running pre-P0 code — restart it (see "Where it runs" above).
-- **Insert from phone fails with "row violates row-level security policy"** → user_id isn't in `cellar27_allowed_users`, or `cellar27_check_rate_limit` returned false (>20 requests in the last hour). Seed the allowlist via service_role.
-- **Request errors with "Daily AI capacity reached"** → `MAX_CLAUDE_CALLS_PER_DAY` ceiling hit. See `cellar27_watcher_metrics` for today's count; bump the env var and restart if needed.
+- **Insert from phone fails with "row violates row-level security policy"** → user_id isn't in `cellar27_allowed_users`, or `cellar27_check_rate_limit` returned false (default 100 requests/hour as of v0.8). Seed the allowlist via service_role.
+- **Request errors with "Daily AI capacity reached"** → `MAX_CLAUDE_CALLS_PER_DAY` ceiling hit (default 250). See `cellar27_watcher_metrics` for today's count; bump the env var and restart if needed.
+- **Request errors with "policy: rate limit: N/100 requests in last hour"** → watcher-side in-memory rate limit (cleared on restart, tunable via `WATCHER_RATE_LIMIT_PER_HOUR`).
+
+## Email notifications
+
+When a watcher-side limit fires (policy denial or daily ceiling), the watcher can send an email so you know without checking logs. Set the SMTP env vars in `.env`:
+
+```ini
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=you@gmail.com
+SMTP_PASS=<16-char Gmail App Password>
+NOTIFY_FROM=you@gmail.com
+NOTIFY_TO=you@gmail.com
+```
+
+Leave any one blank to disable silently. `NOTIFY_COOLDOWN_MS` (default 30 min) suppresses repeated sends of the same limit-key so a runaway loop can't flood your inbox.
+
+The emails are informational — no inline approval. They tell you which limit fired and the SQL/env tweaks to grant more.

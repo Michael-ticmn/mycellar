@@ -8,6 +8,7 @@ import { renderPairingRequest, renderScanRequest } from './render.js';
 import { parsePairingResponse, parseScanResponse } from './parse.js';
 import { invokeBridgeAgent } from './agent.js';
 import { denyReason } from './policy.js';
+import { notify } from './notify.js';
 
 const log = (...args) => console.log(new Date().toISOString(), ...args);
 const err = (...args) => console.error(new Date().toISOString(), ...args);
@@ -86,6 +87,26 @@ async function pickUp(table, row) {
       status: 'error',
       error_message: `policy: ${denied}`,
     }).eq('id', row.id).eq('status', 'pending');
+    notify({
+      key: `policy:${row.user_id}`,
+      subject: `cellar27 — limit hit (${row.user_id.slice(0, 8)})`,
+      body: [
+        `User ${row.user_id} hit a watcher-side limit on cellar27.`,
+        ``,
+        `Reason: ${denied}`,
+        `Time:   ${new Date().toISOString()}`,
+        `Table:  ${table}`,
+        ``,
+        `What this likely means:`,
+        `  - "rate limit: N/${process.env.WATCHER_RATE_LIMIT_PER_HOUR || 100} requests in last hour"`,
+        `      → in-memory window. Restart the watcher to clear it,`,
+        `        or raise WATCHER_RATE_LIMIT_PER_HOUR in watcher/.env.`,
+        `  - "user X not on allowlist"`,
+        `      → only on the allowlist when added to cellar27_allowed_users.`,
+        ``,
+        `See docs/SECURITY.md for tuning options.`,
+      ].join('\n'),
+    }).catch((e) => err('notify policy:', e));
     return;
   }
 
@@ -164,6 +185,27 @@ async function pickUp(table, row) {
         status: 'error',
         error_message: `Daily AI capacity reached (${CONFIG.maxClaudeCallsPerDay}). Resets at midnight UTC.`,
       }).eq('id', claimed.id);
+      notify({
+        key: 'daily-ceiling',
+        subject: `cellar27 — daily Claude ceiling reached (${CONFIG.maxClaudeCallsPerDay})`,
+        body: [
+          `cellar27 has hit the global daily Claude-call ceiling.`,
+          ``,
+          `Cap:    ${CONFIG.maxClaudeCallsPerDay}`,
+          `Time:   ${new Date().toISOString()}`,
+          `Table:  ${table}`,
+          `User:   ${claimed.user_id}`,
+          ``,
+          `Resets at UTC midnight. To allow more today:`,
+          `  1) Bump MAX_CLAUDE_CALLS_PER_DAY in watcher/.env`,
+          `  2) update cellar27_watcher_metrics set spawn_count = 0`,
+          `       where metric_date = current_date;`,
+          `  3) Restart the watcher.`,
+          ``,
+          `If this looks unexpected, check cellar27_audit_log (if enabled)`,
+          `or scan logs for a runaway loop. See docs/SECURITY.md.`,
+        ].join('\n'),
+      }).catch((e) => err('notify ceiling:', e));
       try { await unlink(reqPath); } catch { /* best-effort */ }
       return;
     }
