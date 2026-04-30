@@ -83,9 +83,14 @@ The laptop only needs to be awake during step ③ (the AI reasoning window — t
 
 - **Phone uses anon key.** RLS scopes every row to the signed-in `user_id`. The service-role key never leaves `watcher/.env`.
 - **Sign-ups disabled** in Supabase. Only existing accounts (created from the dashboard) can sign in.
-- **Watcher allowlist.** `ALLOWED_USER_IDS` env var means even an authenticated user gets rejected pre-spawn unless they're on the list.
-- **Per-user rate limit** (20 req/hour, sliding window) caps blast radius.
-- **DB-layer caps.** CHECK constraints on jsonb sizes; per-user pending-request cap (5 max in flight) enforced via trigger.
+- **DB-enforced allowlist.** Only user_ids listed in `cellar27_allowed_users` can INSERT into `pairing_requests` / `scan_requests` (RLS `WITH CHECK`). Watcher's `ALLOWED_USER_IDS` env stays as a redundant backstop.
+- **DB-enforced rate limit.** `cellar27_check_rate_limit(auth.uid())` in the same RLS check rejects any insert past 20 combined pairing+scan rows in the last 60 min.
+- **Concurrent in-flight cap.** `enforce_pending_request_cap` / `enforce_pending_scan_cap` triggers reject a 6th in-flight (`pending` + `picked_up`) row per user.
+- **Global daily Claude ceiling.** Watcher calls `cellar27_try_record_spawn(MAX_CLAUDE_CALLS_PER_DAY)` before every `claude --print` spawn; default 100/day across all users, atomic counter in `cellar27_watcher_metrics`. Resets at UTC midnight.
+- **Stale-claim recovery.** `cellar27_sweep_stale_claims` resets timed-out `picked_up` rows to `pending` (up to 2 retries) before marking them `error`.
+- **Size CHECK constraints** on user-supplied jsonb (`context` ≤ 4 KB, `cellar_snapshot` ≤ 65 KB, `image_paths` ≤ 4 KB) so a runaway phone payload can't bloat a row.
+
+See [`docs/SECURITY.md`](docs/SECURITY.md) for the full limits table, where each is enforced, and how to tune.
 
 ## What about scan?
 
