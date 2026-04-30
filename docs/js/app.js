@@ -552,6 +552,11 @@ function mountScan() {
   }
 
   queueListeners.add(renderTray);
+  // Initial paint: if we're returning to #/scan after a save (or any
+  // navigation), the queue may already hold ready/pending entries whose
+  // status won't change again on its own. Without this, those entries
+  // stay invisible until the next state transition.
+  renderTray();
   // Drop this mount's listener when the user navigates away. Also restore
   // any entry stuck in 'reviewing' (user navigated away without saving)
   // back to 'ready' so it stays visible in the tray on return.
