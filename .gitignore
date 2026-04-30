@@ -11,6 +11,10 @@ docs/config.local.js
 **/npm-debug.log*
 **/yarn-debug.log*
 
+# Watcher runtime logs
+watcher/watcher.out.log
+watcher/watcher.err.log
+
 # OS / editor
 .DS_Store
 Thumbs.db

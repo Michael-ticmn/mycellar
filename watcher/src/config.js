@@ -23,6 +23,7 @@ export const CONFIG = {
     images:    join(bridgeDir, 'images'),
   },
   timeoutMinutes: parseInt(process.env.TIMEOUT_MINUTES || '10', 10),
+  maxClaudeCallsPerDay: parseInt(process.env.MAX_CLAUDE_CALLS_PER_DAY || '100', 10),
   storageBucket: 'bottle-labels',
   autoInvoke: (process.env.AUTO_INVOKE || 'true').toLowerCase() !== 'false',
   claudeBin: process.env.CLAUDE_BIN || 'claude',

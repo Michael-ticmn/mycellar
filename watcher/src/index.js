@@ -1,5 +1,6 @@
 import { mkdir, writeFile, readFile, rename, unlink } from 'node:fs/promises';
 import { join, basename, extname } from 'node:path';
+import { hostname } from 'node:os';
 import { createClient } from '@supabase/supabase-js';
 import chokidar from 'chokidar';
 import { CONFIG } from './config.js';
@@ -11,16 +12,19 @@ import { denyReason } from './policy.js';
 const log = (...args) => console.log(new Date().toISOString(), ...args);
 const err = (...args) => console.error(new Date().toISOString(), ...args);
 
+const HOST = hostname();
+
 const sb = createClient(CONFIG.supabaseUrl, CONFIG.supabaseServiceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
 await ensureDirs();
 await sweepStaleRequests(); // catch up on anything queued while we were down
+await sweepStaleClaims();   // recover any picked_up rows abandoned by a prior crash
 subscribePairingRequests();
 subscribeScanRequests();
 watchResponses();
-setInterval(timeoutStaleRequests, 60_000);
+setInterval(sweepStaleClaims, 120_000);
 
 log('cellar27-watcher running. Bridge dir:', CONFIG.bridgeDir);
 
@@ -87,7 +91,7 @@ async function pickUp(table, row) {
 
   // Re-check + atomically claim with status='picked_up' to avoid double-processing.
   const { data: claimed, error: claimErr } = await sb.from(table)
-    .update({ status: 'picked_up', picked_up_at: new Date().toISOString() })
+    .update({ status: 'picked_up', picked_up_at: new Date().toISOString(), claimed_by: HOST })
     .eq('id', row.id).eq('status', 'pending')
     .select().single();
   if (claimErr || !claimed) { log(`already claimed: ${table}.${row.id}`); return; }
@@ -137,7 +141,34 @@ async function pickUp(table, row) {
     log(`wrote scan request ${reqPath} (intent=${claimed.intent}, images=${images.length})`);
   }
 
-  if (reqPath) invokeBridgeAgent(reqPath);
+  if (reqPath) {
+    // Global daily ceiling: refuse to spawn if we're at cap. Atomic upsert
+    // in Postgres (cellar27_try_record_spawn) so two watchers / parallel
+    // requests can't race past the limit.
+    const { data: allowed, error: ceilErr } = await sb.rpc('cellar27_try_record_spawn', {
+      p_max: CONFIG.maxClaudeCallsPerDay,
+    });
+    if (ceilErr) {
+      err('try_record_spawn:', ceilErr);
+      // Fail closed: if we can't talk to Postgres, don't spawn either.
+      await sb.from(table).update({
+        status: 'error',
+        error_message: `ceiling check failed: ${ceilErr.message}`,
+      }).eq('id', claimed.id);
+      try { await unlink(reqPath); } catch { /* best-effort */ }
+      return;
+    }
+    if (allowed !== true) {
+      log(`DAILY CEILING REACHED (${CONFIG.maxClaudeCallsPerDay}); refusing to spawn for ${table}.${claimed.id}`);
+      await sb.from(table).update({
+        status: 'error',
+        error_message: `Daily AI capacity reached (${CONFIG.maxClaudeCallsPerDay}). Resets at midnight UTC.`,
+      }).eq('id', claimed.id);
+      try { await unlink(reqPath); } catch { /* best-effort */ }
+      return;
+    }
+    invokeBridgeAgent(reqPath);
+  }
 }
 
 async function downloadImage(storagePath, localPath) {
@@ -236,17 +267,26 @@ async function archive(reqFileName, responsePath) {
   try { await rename(responsePath, join(CONFIG.dirs.processed, basename(responsePath))); } catch { /* same */ }
 }
 
-// ───────────────────────── timeouts ─────────────────────────
+// ───────────────────────── stale-claim sweep ─────────────────────────
 
-async function timeoutStaleRequests() {
-  const cutoff = new Date(Date.now() - CONFIG.timeoutMinutes * 60_000).toISOString();
-  for (const table of ['pairing_requests', 'scan_requests']) {
-    const { data, error } = await sb.from(table)
-      .update({ status: 'error', error_message: `timeout after ${CONFIG.timeoutMinutes} min in picked_up` })
-      .eq('status', 'picked_up').lt('picked_up_at', cutoff)
-      .select('id');
-    if (error) { err(`timeout sweep ${table}:`, error); continue; }
-    for (const row of data || []) log(`timed out ${table}.${row.id}`);
+// Calls cellar27_sweep_stale_claims in Postgres, which atomically resets
+// timed-out 'picked_up' rows to 'pending' (up to 2 retries) or marks them
+// 'error'. For each row sent back to 'pending' we re-pick it up here,
+// since INSERT-only realtime subscriptions don't fire on UPDATE.
+async function sweepStaleClaims() {
+  const { data, error } = await sb.rpc('cellar27_sweep_stale_claims', {
+    p_timeout_minutes: CONFIG.timeoutMinutes,
+    p_max_retries: 2,
+  });
+  if (error) { err('sweep_stale_claims:', error); return; }
+  for (const row of data || []) {
+    log(`sweep ${row.action}: ${row.table_name}.${row.request_id}`);
+    if (row.action !== 'retry') continue;
+    const { data: full, error: fetchErr } = await sb
+      .from(row.table_name).select('*').eq('id', row.request_id).single();
+    if (fetchErr || !full) { err(`refetch retry row:`, fetchErr); continue; }
+    try { await pickUp(row.table_name, full); }
+    catch (e) { err(`retry pickUp ${row.request_id}:`, e); }
   }
 }
 
