@@ -61,10 +61,10 @@ a:hover { text-decoration: underline; }
   vertical-align: middle;
 }
 .topbar nav { display: flex; gap: 0.4rem; flex-wrap: wrap; flex: 1; min-width: 0; }
-.topbar nav a .nav-icon { vertical-align: middle; display: block; width: 24px; height: 24px; }
+.topbar nav a .nav-icon { vertical-align: middle; display: block; width: 30px; height: 30px; }
 .topbar nav a[data-route="drink-now"] .nav-icon { transform: rotate(-45deg); }
 .topbar nav a {
-  padding: 0.5rem 0.7rem;
+  padding: 0.55rem 0.85rem;
   border-radius: var(--radius);
   color: var(--text);
   white-space: nowrap;
