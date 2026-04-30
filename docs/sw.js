@@ -23,7 +23,7 @@ const SHELL = [
   './js/varietal-windows.js',
   './views/cellar.html',
   './views/add.html',
-  './views/scan.html',
+  './views/manage.html',
   './views/pairing.html',
   './views/flight.html',
   './views/drink-now.html',

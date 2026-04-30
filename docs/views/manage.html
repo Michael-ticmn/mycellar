@@ -1,11 +1,18 @@
 <section class="scan-view" id="scan-view" data-stage="intent">
 
   <div class="scan-stage-pane" data-pane="intent">
-    <h1>Scan</h1>
-    <p class="muted">Use the camera to add a new bottle, or identify what you're pouring.</p>
-    <div class="row">
-      <button data-action="start-add">Add new bottle</button>
-      <button data-action="start-pour" class="ghost">Pour from cellar</button>
+    <h1>Manage</h1>
+    <div class="manage-grid">
+      <div class="manage-col">
+        <h2>Add a bottle</h2>
+        <button data-action="start-add">Scan label</button>
+        <a class="btn ghost manage-link" href="#/add">Enter manually</a>
+      </div>
+      <div class="manage-col">
+        <h2>Pour a bottle</h2>
+        <button data-action="start-pour">Scan to identify</button>
+        <a class="btn ghost manage-link" href="#/cellar">Pick from cellar</a>
+      </div>
     </div>
     <ul id="scan-queue-tray" class="scan-queue-tray" hidden></ul>
   </div>
@@ -43,7 +50,7 @@
     <p class="error" id="scan-error"></p>
     <div class="row">
       <button data-action="restart">Try again</button>
-      <a href="#/cellar" class="btn ghost" style="display:inline-block; padding:0.5rem 1rem; border:1px solid var(--surface-2); border-radius:var(--radius);">Back to cellar</a>
+      <a href="#/manage" class="btn ghost" style="display:inline-block; padding:0.5rem 1rem; border:1px solid var(--surface-2); border-radius:var(--radius);">Back</a>
     </div>
   </div>
 

@@ -19,15 +19,16 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 // ── Routing (hash-based, supports `bottle/<id>`) ──────────────────
-const ROUTES = ['cellar', 'add', 'edit', 'pairing', 'flight', 'drink-now', 'scan', 'bottle'];
+const ROUTES = ['cellar', 'add', 'edit', 'pairing', 'flight', 'drink-now', 'manage', 'scan', 'bottle'];
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
   const [route, ...params] = h.split('/');
   return { route: ROUTES.includes(route) ? route : 'cellar', params };
 }
 async function loadView(name) {
-  // Edit reuses the add view (form is identical; submit handler differs).
-  const file = name === 'edit' ? 'add' : name;
+  // Aliases: edit → add (same form, different submit), scan → manage
+  // (kept so old PWA shortcuts / bookmarks don't 404).
+  const file = name === 'edit' ? 'add' : name === 'scan' ? 'manage' : name;
   const res = await fetch(`views/${file}.html`);
   return res.ok ? res.text() : `<p>View not found: ${name}</p>`;
 }
@@ -56,7 +57,8 @@ async function mountView(route, params = []) {
     case 'drink-now':  return mountDrinkNow();
     case 'pairing':    return mountPairing();
     case 'flight':     return mountFlight();
-    case 'scan':       return mountScan();
+    case 'manage':     return mountManage();
+    case 'scan':       return mountManage(); // legacy alias
     case 'bottle':     return mountBottleDetail(params[0]);
   }
 }
@@ -439,7 +441,7 @@ async function mountDrinkNow() {
 // Multi-bottle add: submit a scan, immediately go back to the intent
 // stage, scan the next one. Each in-flight scan is one entry in
 // scanQueue. The realtime subscription survives navigation because
-// the queue lives at module scope, not inside mountScan's closure.
+// the queue lives at module scope, not inside mountManage's closure.
 //
 // status flow:  pending → ready → reviewing → (removed on Save)
 //                                 ↘ ready (if user navigates back without saving)
@@ -479,8 +481,8 @@ function removeScanEntry(requestId) {
   notifyQueue();
 }
 
-// ── Scan view (orchestrator state machine) ────────────────────────
-function mountScan() {
+// ── Manage view (orchestrator state machine) ──────────────────────
+function mountManage() {
   const root = $('#scan-view');
   if (!root) return;
 
@@ -561,7 +563,8 @@ function mountScan() {
   // any entry stuck in 'reviewing' (user navigated away without saving)
   // back to 'ready' so it stays visible in the tray on return.
   const onHashChange = () => {
-    if (parseHash().route !== 'scan') {
+    const r = parseHash().route;
+    if (r !== 'manage' && r !== 'scan') {
       if (reviewingEntry && reviewingEntry.status === 'reviewing') {
         reviewingEntry.status = 'ready';
         notifyQueue();
