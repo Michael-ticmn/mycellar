@@ -190,3 +190,74 @@ Mechanics: VSCode's file watcher held `frontend/` open, blocking `git mv`. Worke
 Updated path references in `.gitignore`, root `README.md`, `HANDOFF_QUEUE.md`, `CURRENT_STATE.md`, `docs/README.md`, and the error message in `docs/js/supabase-client.js`. Historical `frontend/` mentions in earlier BUILD_LOG entries kept as-is — accurate for their time.
 
 Owner needs to switch GH Pages source folder from `/` to `/docs` after this push.
+
+---
+
+## 2026-04-29 → 2026-04-30 — Phase 3 + security tuning + UX polish
+
+A two-day stretch where Phase 3 shipped, the security plan landed, and a lot of UX rough edges got smoothed. Grouping by theme rather than commit (full record in `git log`).
+
+### Scan flow (Phase 3)
+
+- **`scan-add`**: front-label + optional back-label capture, Storage upload, scan_request round-trip, post-scan review form with AI-extracted producer/wine/varietal/vintage/region/style + AI enrichment (food pairings, tasting notes, serving recs). (v0.4.0)
+- **`scan-pour`**: identify-from-photo with cellar context; matched bottle → "Pour this" button; multiple candidates → pick from a list. (v0.4.0)
+- **Bottle detail** view: front + back thumbnails (lightbox on tap), structured details, actions (pour / edit / delete / fetch-or-refresh details).
+- **Multi-bottle queue** (v0.6.0): submit a scan → return immediately to the intent stage to scan the next; tray below the buttons shows in-flight + ready entries; tap ready → review form with merge prompt; up to 5 in flight (gated to match the existing DB trigger). All queue state in-memory, cleared on reload.
+- **Scan-add detects duplicate** (v0.5.2) on Save and offers merge (qty+1, opportunistically fill missing photos/details) vs separate row.
+
+### Security — P0/P1 plan landed, then re-tuned for actual use
+
+P0/P1 in `0004_security_p0_p1.sql` ([ca1dfcf](https://github.com/Michael-ticmn/mycellar/commit/ca1dfcf)):
+
+- **P0-1**: allowlist moved from watcher env into RLS via `cellar27_allowed_users` + `WITH CHECK` clauses on `pairing_requests` / `scan_requests`. Watcher allowlist kept as redundant backstop.
+- **P0-2**: per-user rate limit (`cellar27_check_rate_limit`) into the same RLS clause; index on `(user_id, created_at desc)` to keep the count fast.
+- **P0-4**: `claimed_by` (hostname) + `retry_count` columns; `cellar27_sweep_stale_claims` resets timed-out `picked_up` rows back to `pending` for up to 2 retries before marking them `error`. Watcher calls it via RPC every 2 min and re-picks up retried rows.
+- **P1-1**: `cellar27_watcher_metrics` table + `cellar27_try_record_spawn(p_max)` atomic upsert. Watcher checks before every `claude --print` spawn.
+
+Tier 1 + Tier 2 re-tune ([507a778](https://github.com/Michael-ticmn/mycellar/commit/507a778), `0005_security_tune.sql`):
+
+- DB rate limit default 20 → 100/hr; watcher in-memory rate limit 20 → 100/hr (env-tunable via `WATCHER_RATE_LIMIT_PER_HOUR`); daily ceiling default 100 → 250. The original numbers were tuned for a hostile-key abuse scenario and bottlenecked legitimate bulk-add inventorying.
+- `watcher/src/notify.js` (new): nodemailer + SMTP. Watcher calls `notify()` on policy denial and ceiling refusal; per-key cooldown so a runaway loop can't flood the inbox. Gmail SMTP via App Password verified end-to-end with a real test send.
+
+Documentation pass:
+
+- **`docs/SECURITY.md`** (new) — one place for the limit table, where each layer enforces, and a tune/bypass cookbook. ARCHITECTURE.md "Security shape" unstaled (was still describing the rate limit and allowlist as living in the watcher).
+
+### PWA caching — the long-tail of "version updated but UI didn't change"
+
+Three layered fixes after a sequence of "I had to clear data" reports:
+
+1. **`updateViaCache:'none'` on register** (v0.6.6) — bypasses HTTP cache for `sw.js` AND its `importScripts` so version-bump detection works.
+2. **`cache:'reload'` on each addAll fetch in install** (v0.7.3) — bypasses HTTP cache for every SHELL asset on install, so the new SW doesn't cache stale CSS/views even after it installs successfully.
+3. **In-app "Update ready" banner** (v0.7.1) — replaces silent auto-reload with a user-tappable Reload button. Drops `self.skipWaiting()` from install so the new SW enters `waiting`, lets the page show the banner, and only activates on user tap (which posts `skipWaiting`). Belt-and-braces against iOS Safari PWA's occasional failure to auto-reload after `controllerchange`.
+
+### UX polish
+
+- **Cellar list view as default** + List/Card toggle (v0.8.0). Compact rows with a style-colored 4px left edge; ~6–8 bottles per phone screen vs 2 in the old card grid. Toggle persists in localStorage. Card view kept for the photo grid.
+- **Icon-only nav** (v0.7.5–0.7.7). Bottle (Manage), glass+plate (Pair), 3 glasses (Flight), tipped wine glass (Drink now). Touch target sized for mobile.
+- **Merge Add + Scan into Manage** (v0.7.0). 2-column grid: Add a bottle [Scan label / Enter manually] · Pour a bottle [Scan to identify / Pick from cellar]. `#/scan` route alias kept for old PWA shortcuts.
+- **Read-aloud on every narrative** (v0.8.2) via SpeechSynthesis API. Speaker icon next to each AI-generated narrative; click again to stop; cancels on navigation. **Voice + speed picker** (v0.8.3) behind a ▾ caret — single shared popover with a voice radio list (English-filtered by default, with a "show all" toggle), 0.7–1.3× rate slider, Test button. Selection persists in localStorage; falls back to default if the saved voice isn't available on the current device.
+- **Pour-loader** (v0.8.1) — tilted SVG bottle dripping drops into a wine glass that fills, holds, then drains, on a 2.4s loop. Replaces the plain text "Asking your sommelier…" wherever we wait on Claude. Pure SMIL animation, no JS lifecycle.
+- **Capture button** (v0.7.6): big round and centered (camera-app feel) instead of left-aligned default flex.
+- **Wine-glass icon tilted -45°** (v0.7.4) — earlier 90° read as flat; -45° reads "tipped/knocked over."
+- **Sommelier rename** + wine-color tinted bottle cards + flight extras suggestions (v0.5.0).
+- **Quick wins**: edit bottle, cellar search/filter/sort + style chips, photo lightbox on tap, auto-enrich on save (v0.5.3).
+- **Drink-now reorder** (v0.6.4): "Ask your sommelier" surfaced above the local peak-window list.
+- **Sign-out button removed** (v0.6.5): single-user app, never tapped, just stole topbar space.
+- **App version label in topbar** (v0.6.1) — `vX.Y.Z` next to the brand so we can eyeball whether the SW has swapped.
+
+### Repo / docs
+
+- **MIT License** added.
+- **ARCHITECTURE.md** — one-page request lifecycle, plus a colored printable PDF version (`docs-pdf/architecture.html` / `.pdf`) sized to landscape letter.
+- **Watcher runtime** — README updated to reflect the actual deployment shape (detached background `node.exe` started via `Start-Process -WindowStyle Hidden`, logs to `watcher/watcher.out.log` / `.err.log`, gitignored). No PM2, no service, no scheduled task.
+
+### Decisions worth flagging
+
+- **Why detached `node.exe` and not PM2 / a service**: this is a personal-use app on the owner's primary device. PM2 was overkill; a hidden background process started from a one-liner PowerShell snippet is simpler and survives terminal closing.
+- **Why in-memory scan queue (not localStorage-persistent)**: simplest path to ship; on reload the queue clears but the underlying `scan_request` rows still complete in Postgres. A future "unreviewed responses" view could pick them up if this becomes a problem in practice. So far it hasn't.
+- **Why limits raised to 100/hr + 250/day instead of building approval-via-email**: cost/benefit. For a single-user app, raising limits to fit normal use achieves the same practical outcome as an approval workflow with zero new moving parts. Tier 3 (HMAC-signed approval links + Edge Function + grants table) was scoped but deferred until there's actually a multi-user shape that needs it.
+
+### Next session
+
+No assigned next task. Owner driving feature requests. Optional cleanup item in HANDOFF_QUEUE: write the security smoke test that was scoped in P1-3.

@@ -1,22 +1,32 @@
 # cellar27 — CURRENT_STATE.md
 
-## As of 2026-04-28 (post deploy + lockdown + PWA + docs/ rename)
+## As of 2026-04-30 (post Phase 3 ship + security tuning + UX polish)
 
 **What exists and works:**
-- **Frontend live on GitHub Pages** at `https://michael-ticmn.github.io/mycellar/`. Source is `docs/` (renamed from `frontend/` so GH Pages can serve directly). Anon-key + URL committed in `docs/config.public.js`; `docs/config.local.js` is git-ignored for local override.
-- **PWA**: manifest + service worker + SVG icons. Installable from iOS/Android home screen, app shell cached for instant load.
-- **Watcher** running locally on the Win11 dev box (`npm start`). Subscribed to Realtime, autonomously spawns `claude --print` per request, ingests responses, archives.
-- **Supabase**: schema + RLS + Storage + Realtime publication + lockdown (CHECK constraints, per-user pending cap, sign-ups disabled).
-- **Watcher policy gates**: `ALLOWED_USER_IDS` env restricts compute to allowlisted users; sliding-window 20-req/hr/user rate limit.
-- End-to-end pair round-trip verified ~22–26s with all gates active.
 
-**What's in progress:** owner needs to switch GH Pages source folder from `/` to `/docs` in repo Settings → Pages now that the rename is pushed. Then phone smoke test.
+- **Frontend live on GitHub Pages** at `https://michael-ticmn.github.io/mycellar/`. Source is `docs/`.
+- **PWA**: manifest + service worker + SVG icons + `updateViaCache: 'none'` on register, `cache: 'reload'` on install fetches, and a user-tappable "Update ready" banner so new builds land cleanly.
+- **Manage tab** (merged Add + Scan) with a 2-column grid: Add a bottle [Scan label / Enter manually] · Pour a bottle [Scan to identify / Pick from cellar].
+- **Multi-bottle scan-add** with an in-memory queue + tray; up to 5 in flight, each independently reviewable as its AI response lands.
+- **Bottle detail** with front/back label thumbnails (lightbox on tap), AI enrichment ("More info") and a Read-aloud button on every narrative.
+- **Cellar list view** as default (compact rows with style-colored left edge), with a List/Card toggle persisted in localStorage.
+- **Read-aloud** on every narrative (Pair / Flight / Drink-now / scan results / bottle detail) via the browser's SpeechSynthesis API. Voice + speed picker behind a ▾ caret, persisted across sessions.
+- **Watcher** runs as a detached background `node.exe` on the owner's Win11 machine (no PM2 / service / scheduled task). Restart procedure documented in `watcher/README.md`.
+- **Security gates** (see [`docs/SECURITY.md`](docs/SECURITY.md) for the full table):
+  - DB-enforced allowlist (`cellar27_allowed_users`) on INSERT.
+  - DB-enforced rate limit (100/hr per user).
+  - 5 in-flight cap per user (DB trigger).
+  - Global daily Claude-call ceiling (250/day, atomic counter in `cellar27_watcher_metrics`).
+  - Stale-claim sweep with 2-retry cap.
+  - Email notification on limit hit (Gmail SMTP via App Password; cooldown-throttled).
+- End-to-end pair, flight, drink-now, scan-add, scan-pour, manual-add — all working from phone PWA.
+
+**What's in progress:** nothing actively blocked.
 
 **What's broken / incomplete:**
-- Scan flow (camera capture + Storage upload) — Phase 3.
-- Tasting log, mobile-specific layout pass, sharing flights — Phase 4 polish.
-- Watcher runs on the dev box, not an always-on host. Sleep = no AI processing during the sleep window. Acceptable for now.
+- `scripts/security-smoke-test.mjs` was scoped in the original P1-3 plan but never written. Manual verification has been used instead.
+- Watcher runs on the owner's primary device, not an always-on host. Sleep = no AI processing during the sleep window. Acceptable for personal use.
 
-**Immediate next action:** owner — Settings → Pages → Folder: `/docs` → Save. Wait 1–2 min for rebuild. Then `https://michael-ticmn.github.io/mycellar/` should load the app directly. Phone install + smoke test follows.
+**Immediate next action:** none assigned. Owner driving feature requests.
 
-**Which surface should act next:** owner (Pages folder change + phone smoke test), then Code (Phase 3 scan flow) once round-trip works on phone.
+**Which surface should act next:** owner (next feature request).
