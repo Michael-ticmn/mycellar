@@ -61,6 +61,7 @@ a:hover { text-decoration: underline; }
   vertical-align: middle;
 }
 .topbar nav { display: flex; gap: 0.25rem; flex-wrap: wrap; flex: 1; min-width: 0; }
+.topbar nav a .nav-icon { vertical-align: middle; display: inline-block; }
 .topbar nav a {
   padding: 0.4rem 0.75rem;
   border-radius: var(--radius);
