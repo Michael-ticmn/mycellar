@@ -399,9 +399,7 @@ async function renderRecommendations(resultEl, response) {
       </div>
     </article>`;
   }));
-  const narrative = response.narrative
-    ? `<section><h2>Narrative</h2><div class="narrative">${markdownLite(response.narrative)}</div></section>`
-    : '';
+  const narrative = narrativeBlockHTML(response.narrative, { heading: 'Narrative' });
   resultEl.innerHTML = `
     <section>
       <h2>Picks</h2>
@@ -409,6 +407,67 @@ async function renderRecommendations(resultEl, response) {
     </section>
     ${narrative}`;
 }
+
+// Wrap a narrative blob with a Read-aloud button. Heading is optional;
+// when set, the button sits inline with the heading. The button is
+// wired by a global click delegate that calls window.speechSynthesis
+// on the sibling .narrative's textContent.
+function narrativeBlockHTML(text, opts = {}) {
+  if (!text) return '';
+  const heading = opts.heading || '';
+  const headingTag = opts.headingTag || 'h2';
+  const wrapStyle = opts.wrapStyle || '';
+  const headHTML = heading
+    ? `<div class="narrative-head"><${headingTag}>${escapeHtml(heading)}</${headingTag}>${speakBtnHTML()}</div>`
+    : `<div class="narrative-head narrative-head-bare">${speakBtnHTML()}</div>`;
+  return `<section class="narrative-block"${wrapStyle ? ` style="${wrapStyle}"` : ''}>${headHTML}<div class="narrative">${markdownLite(text)}</div></section>`;
+}
+function speakBtnHTML() {
+  return `<button type="button" class="narrative-speak" data-speak-target aria-label="Read aloud" title="Read aloud">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+      <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"
+            d="M5 9 h3 l5 -4 v14 l-5 -4 h-3 z M16 9 a3 3 0 0 1 0 6 M18 7 a6 6 0 0 1 0 10" />
+    </svg>
+  </button>`;
+}
+
+let _speakingBtn = null;
+function toggleSpeak(text, btn) {
+  const synth = window.speechSynthesis;
+  if (!synth) { alert('Read-aloud not supported on this browser.'); return; }
+  const wasThis = _speakingBtn === btn;
+  if (synth.speaking || synth.pending) {
+    synth.cancel();
+    if (_speakingBtn) { _speakingBtn.classList.remove('speaking'); _speakingBtn = null; }
+    if (wasThis) return; // just stop
+  }
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.rate = 0.95;
+  const clear = () => {
+    btn.classList.remove('speaking');
+    if (_speakingBtn === btn) _speakingBtn = null;
+  };
+  utter.onend = clear;
+  utter.onerror = clear;
+  _speakingBtn = btn;
+  btn.classList.add('speaking');
+  synth.speak(utter);
+}
+// Delegate: any tap on a Read-aloud button finds the nearest .narrative
+// element in the same .narrative-block and reads its plain text.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-speak-target]');
+  if (!btn) return;
+  const block = btn.closest('.narrative-block, .bottle-details-section, section, article');
+  const narrEl = block?.querySelector('.narrative');
+  const text = narrEl?.textContent?.trim();
+  if (text) toggleSpeak(text, btn);
+});
+// Stop on navigation so a half-read narrative doesn't keep talking.
+window.addEventListener('hashchange', () => {
+  if (window.speechSynthesis?.speaking) window.speechSynthesis.cancel();
+  if (_speakingBtn) { _speakingBtn.classList.remove('speaking'); _speakingBtn = null; }
+});
 
 function markdownLite(md) {
   const escaped = escapeHtml(md);
@@ -469,7 +528,7 @@ function mountFlight() {
         });
         // No structured cellar picks — render narrative only.
         extrasResult.innerHTML = response.narrative
-          ? `<section><h3>Suggestions</h3><div class="narrative">${markdownLite(response.narrative)}</div></section>`
+          ? narrativeBlockHTML(response.narrative, { heading: 'Suggestions', headingTag: 'h3' })
           : '<p class="muted">(no suggestions)</p>';
       } catch (err) { extrasResult.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
     });
@@ -836,7 +895,7 @@ function renderAddReviewHTML(ext, details, imagePaths, narrative) {
       </div>
     </form>
     ${details ? `<section style="margin-top:2rem"><h3>Enrichment</h3><div class="narrative">${renderDetailsHTML(details)}</div></section>` : ''}
-    ${narrative ? `<section style="margin-top:1.5rem"><h3>Narrative</h3><div class="narrative">${markdownLite(narrative)}</div></section>` : ''}
+    ${narrativeBlockHTML(narrative, { heading: 'Narrative', headingTag: 'h3', wrapStyle: 'margin-top:1.5rem' })}
   `;
 }
 
@@ -902,7 +961,7 @@ async function renderPourResultHTML(response) {
             </div>
           </div>
         </article>
-        ${response.narrative ? `<section style="margin-top:1rem"><div class="narrative">${markdownLite(response.narrative)}</div></section>` : ''}
+        ${narrativeBlockHTML(response.narrative, { wrapStyle: 'margin-top:1rem' })}
       `;
     }
   }
@@ -924,8 +983,8 @@ async function renderPourResultHTML(response) {
     return `<h2>Possible matches</h2><div class="grid">${cards.join('')}</div>`;
   }
   return `<h2>No match in your cellar</h2>
-    ${response.narrative ? `<div class="narrative">${markdownLite(response.narrative)}</div>` : ''}
-    <p><a href="#/scan">Scan again</a> or <a href="#/cellar">back to cellar</a>.</p>`;
+    ${narrativeBlockHTML(response.narrative)}
+    <p><a href="#/manage">Scan again</a> or <a href="#/cellar">back to cellar</a>.</p>`;
 }
 
 // ── Bottle detail view ────────────────────────────────────────────
@@ -988,8 +1047,8 @@ function renderBottleDetailHTML(b, frontUrl, backUrl) {
         <button data-action="delete" class="ghost">Delete</button>
         ${detailsBtn}
       </div>
-      ${b.details ? `<section class="bottle-details-section">
-        <h2>More info</h2>
+      ${b.details ? `<section class="bottle-details-section narrative-block">
+        <div class="narrative-head"><h2>More info</h2>${speakBtnHTML()}</div>
         <div class="narrative">${renderDetailsHTML(b.details)}</div>
       </section>` : ''}
     </article>

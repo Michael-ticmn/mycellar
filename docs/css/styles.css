@@ -619,3 +619,39 @@ input:focus, select:focus, textarea:focus {
   max-width: 36ch;
   font-size: 0.95rem;
 }
+
+/* ── Read-aloud button for narrative sections ──────────────────── */
+.narrative-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.narrative-head h2,
+.narrative-head h3 { margin: 1.5rem 0 0.75rem; flex: 1; }
+.narrative-head-bare { justify-content: flex-end; margin-bottom: 0.5rem; }
+.narrative-speak {
+  background: transparent;
+  border: 1px solid var(--surface-2);
+  color: var(--muted);
+  padding: 0.3rem 0.55rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.narrative-speak:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.narrative-speak.speaking {
+  background: var(--accent);
+  color: var(--text);
+  border-color: var(--accent-2);
+  animation: speak-pulse 1.5s ease-in-out infinite;
+}
+@keyframes speak-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(168, 56, 56, 0.5); }
+  50%      { box-shadow: 0 0 0 4px rgba(168, 56, 56, 0); }
+}
