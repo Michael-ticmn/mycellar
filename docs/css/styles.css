@@ -285,6 +285,21 @@ input:focus, select:focus, textarea:focus {
 }
 .scan-prompt { text-align: center; }
 
+/* Capture pane: big round Capture button centered, like a camera app */
+.scan-stage-pane[data-pane="capture"] .row {
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+}
+.scan-stage-pane[data-pane="capture"] [data-action="capture"] {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 0.85rem;
+  border-width: 3px;
+}
+
 /* Bottle detail view */
 .bottle-detail { max-width: 720px; margin: 0 auto; }
 .bottle-detail-back { margin-bottom: 1rem; }
