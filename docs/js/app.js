@@ -345,8 +345,38 @@ function collectBottleFields(fd) {
 }
 
 // ── Sommelier requests (pairing / flight / drink-now suggestions) ────
+// Animated SVG loader: tilted bottle pouring into a wine glass that
+// fills, holds, then drains. Inline SVG with SMIL animation so we
+// don't need any extra JS lifecycle.
+function pourLoaderHTML(msg = '') {
+  const svg = `
+    <svg class="pour-loader-svg" viewBox="0 0 36 36" aria-hidden="true" focusable="false">
+      <defs>
+        <clipPath id="pour-bowl-clip"><path d="M16 21 h11 l-1.3 5.5 a5.2 5.2 0 0 1 -8.4 0 z" /></clipPath>
+      </defs>
+      <g transform="rotate(-50 14 14)" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+        <path d="M11 3 h6 v3 c1 0.4 1.4 1.5 1.4 3 v8 a1.4 1.4 0 0 1 -1.4 1.4 h-6 a1.4 1.4 0 0 1 -1.4 -1.4 v-8 c0 -1.5 0.4 -2.6 1.4 -3 z" />
+      </g>
+      <circle cx="18" cy="17" r="0.9" fill="currentColor" opacity="0">
+        <animate attributeName="cy" values="16;22" dur="0.9s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0;1;0" dur="0.9s" repeatCount="indefinite" />
+      </circle>
+      <circle cx="19" cy="17" r="0.7" fill="currentColor" opacity="0">
+        <animate attributeName="cy" values="16;23" dur="0.9s" begin="0.3s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0;1;0" dur="0.9s" begin="0.3s" repeatCount="indefinite" />
+      </circle>
+      <rect clip-path="url(#pour-bowl-clip)" fill="currentColor" opacity="0.85" x="15" width="13" y="27" height="0">
+        <animate attributeName="y" values="27;21.5;21.5;27" dur="2.4s" keyTimes="0;0.6;0.8;1" repeatCount="indefinite" />
+        <animate attributeName="height" values="0;5.5;5.5;0" dur="2.4s" keyTimes="0;0.6;0.8;1" repeatCount="indefinite" />
+      </rect>
+      <path d="M16 21 h11 l-1.3 5.5 a5.2 5.2 0 0 1 -8.4 0 z M21.5 30.4 V34 M19 34 h6"
+            fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" />
+    </svg>`;
+  return `<div class="pour-loader" role="status" aria-live="polite">${svg}${msg ? `<p class="muted pour-loader-msg">${escapeHtml(msg)}</p>` : ''}</div>`;
+}
+
 function setBusy(resultEl, msg) {
-  resultEl.innerHTML = `<p class="muted">${escapeHtml(msg)}</p>`;
+  resultEl.innerHTML = pourLoaderHTML(msg);
 }
 async function renderRecommendations(resultEl, response) {
   const recs = Array.isArray(response.recommendations) ? response.recommendations : [];

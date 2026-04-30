@@ -597,3 +597,25 @@ input:focus, select:focus, textarea:focus {
   color: var(--text);
 }
 .view-toggle-btn + .view-toggle-btn { border-left: 1px solid var(--surface-2); }
+
+/* ── Pour loader (sommelier waiting) ───────────────────────────── */
+.pour-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 1.5rem 1rem;
+  color: var(--accent-2);
+}
+.pour-loader-svg {
+  width: 96px;
+  height: 96px;
+  display: block;
+}
+.pour-loader-msg {
+  color: var(--muted);
+  text-align: center;
+  margin: 0;
+  max-width: 36ch;
+  font-size: 0.95rem;
+}
