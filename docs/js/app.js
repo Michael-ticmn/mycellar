@@ -1079,15 +1079,38 @@ if ('serviceWorker' in navigator) {
       // updateViaCache:'none' makes the browser bypass HTTP cache for sw.js
       // AND its importScripts (i.e. version.js) on every update check.
       // Without it (default 'imports'), version.js is read from HTTP cache
-      // and the SW update check sees no change — users were having to clear
+      // and the SW update check sees no change — users had to clear
       // browsing data to pick up new builds.
       const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+
+      // Reload as soon as the new SW takes control (after the user taps
+      // "Reload" in the banner, which posts skipWaiting). hadController
+      // guards against firing on the very first SW install when there
+      // was no prior controller.
       let hadController = !!navigator.serviceWorker.controller;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (!hadController) { hadController = true; return; }
-        console.log('[cellar27] SW updated, reloading');
         window.location.reload();
       });
+
+      // If a SW was already waiting when this page loaded (e.g. page was
+      // closed before user tapped Reload last time), show the banner now.
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        showUpdateBanner(reg.waiting);
+      }
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => {
+          // 'installed' + an existing controller = a new build is ready
+          // and waiting. (Without an existing controller, this is the
+          // very first install; nothing to update.)
+          if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+            showUpdateBanner(sw);
+          }
+        });
+      });
+
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') reg.update().catch(() => {});
       });
@@ -1096,4 +1119,22 @@ if ('serviceWorker' in navigator) {
       console.warn('[cellar27] SW register failed:', e);
     }
   });
+}
+
+function showUpdateBanner(waitingWorker) {
+  if (document.getElementById('update-banner')) return; // already visible
+  const bar = document.createElement('div');
+  bar.id = 'update-banner';
+  bar.innerHTML = `
+    <span>New version ready</span>
+    <button type="button" id="update-banner-reload">Reload</button>
+    <button type="button" id="update-banner-dismiss" class="ghost" aria-label="Dismiss">✕</button>
+  `;
+  document.body.appendChild(bar);
+  bar.querySelector('#update-banner-reload').addEventListener('click', () => {
+    bar.querySelector('#update-banner-reload').textContent = 'Updating…';
+    waitingWorker.postMessage('skipWaiting');
+    // controllerchange handler above triggers the reload once SW activates
+  });
+  bar.querySelector('#update-banner-dismiss').addEventListener('click', () => bar.remove());
 }

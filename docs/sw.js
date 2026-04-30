@@ -34,8 +34,12 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (event) => {
+  // Do NOT call skipWaiting() here — we want the new SW to enter the
+  // 'waiting' state so the page can show an "Update ready" banner. The
+  // page sends a 'skipWaiting' message on user tap, which is handled
+  // by the message listener below.
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting())
+    caches.open(CACHE_VERSION).then((cache) => cache.addAll(SHELL))
   );
 });
 

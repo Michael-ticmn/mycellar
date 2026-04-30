@@ -471,3 +471,24 @@ input:focus, select:focus, textarea:focus {
   background: transparent;
 }
 .manage-link:hover { background: var(--surface-2); text-decoration: none; }
+
+/* ── Update-ready banner ───────────────────────────────────────── */
+#update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--accent-2);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.75rem;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  z-index: 60;
+  font-size: 0.9rem;
+}
+#update-banner button { padding: 0.3rem 0.7rem; font-size: 0.85rem; }
+#update-banner-dismiss { padding: 0.2rem 0.5rem; line-height: 1; }
