@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-05-01 (afternoon) — planned flights + guest plan view (v0.9.9 → v0.10.0)
+
+### Built
+
+**Planned flights (v0.9.9):** First-class persistence for a flight builder result — picks + narrative + sommelier-generated food/prep — with an editable detail page and a list grouped by `occasion_date` (Upcoming / Undated / Past).
+
+- New SQL migration [`0012_planned_flights.sql`](supabase/migrations/0012_planned_flights.sql): user-scoped `planned_flights` table with full RLS (select / insert / update / delete keyed on `auth.uid() = user_id`), `pairing_responses.payload jsonb` column for structured data beyond recommendations/narrative, and the `pairing_requests.request_type` check constraint extended to allow `'flight_plan'`.
+- Pairing transport refactor: pulled `createRequest` and `waitForResponse` out of [`docs/js/pairings.js`](docs/js/pairings.js) into a shared [`docs/js/pairing-bus.js`](docs/js/pairing-bus.js) so the new [`docs/js/planned-flights.js`](docs/js/planned-flights.js) can reuse the realtime dance without duplicating it. The shared `createRequest` now accepts `includeCellar: false` for request types that operate on already-chosen picks (`flight_plan`, `flight_guest`).
+- New "Save this flight" button on the flight builder result panel; submitting captures the picks + narrative + theme + guests + optional title/date, immediately persists the row (so the save doesn't depend on AI enrichment), navigates to `#/planned/<id>`, and fires the `flight_plan` enrichment in the background.
+- Detail page wires inline food editing (add/edit/remove rows, recompute-and-patch on every change) and per-bottle prep editing (chill / breathe / glassware inputs + a free-text notes block); decanters are sommelier-supplied advice rendered as a badge under the bottle name, preserved across edits without being user-toggleable.
+- Watcher gets a `flight_plan` task body in [`watcher/src/render.js`](watcher/src/render.js) — takes the saved picks + narrative as context, returns `{food, prep}` JSON in a `## Plan` section that the existing parser unpacks into `pairing_responses.payload`.
+
+**Polish (v0.9.10 → v0.9.13):** Several rounds of UI feedback turned the planned-flight detail page from "functional" into "good on a phone."
+
+- v0.9.10: prep table stacks per-row on mobile via a `display: block` media query and `data-prep-label` attributes that drive `td::before` content (no horizontal scroll). Food framed as a menu of options to choose from. Nav reordered — Planned moved to the end after Share.
+- v0.9.11: food items render as stacked cards with the description as a 3-row textarea, killing the last source of horizontal scroll.
+- v0.9.12: prep column headers carry units ("Chill (min)", "Breathe (min)") with a hint paragraph above explaining what each column means; renamed "Open" → "Breathe" in the UI (data key stays `open_by` so saved plans still load); decant moves to a non-editable sommelier badge under the bottle name.
+- v0.9.13: "Other notes" in prep is now a heading + inline contenteditable region styled like the Narrative block (no border, italic placeholder, dashed underline on focus, persists on blur). `collectPrep` reads `.value || .textContent` and the listener wiring picks `blur` for contenteditable elements vs `change` for everything else.
+
+**Guest plan view (v0.10.0):** Owner can attach one planned flight to their currently active share link; guests visiting `#/guest/<token>` see a new Tonight tab — read-only walkthrough of the evening.
+
+- New SQL migration [`0013_guest_plan_view.sql`](supabase/migrations/0013_guest_plan_view.sql): `planned_flights.shared_via_link_id uuid references share_links(id) on delete set null`, `planned_flights.guest_view jsonb`, partial unique index `planned_flights_shared_link_uidx` enforcing one-plan-per-link, `pairing_requests.request_type` check constraint extended to allow `'flight_guest'`, and a new `cellar27_share_get_planned_flight(p_token text)` SECURITY DEFINER RPC granted to `anon` that resolves the token (active + not-expired), pulls the attached plan, and projects only the safe bottle columns (no price / notes / storage / user_id / acquired_date).
+- Owner UI: new Guest view section on the planned-flight detail page with three states (no active share link → nudge to `/share`; active link not attached → "Show this plan to guests" button; attached → "Generate guest walkthrough" + share URL + "Open guest view" + "Hide from guests"). Walkthrough generation runs as the owner via the normal `pairing_requests` flow — does NOT consume the share-link AI quota.
+- Guest UI: new Tonight tab in [`docs/views/guest.html`](docs/views/guest.html) (hidden by default). `mountGuest()` calls the new RPC on mount; if a plan is attached the Tonight tab activates by default and other tabs are hidden until the user clicks one. `renderTonightPane()` builds a header + welcome (via `narrativeBlockHTML` so the read-aloud button comes free), an "On the table" food list, and per-pour blocks with a wine-color tinted left edge — each block carries the bottle name + meta, "what to look for" copy, a food-cue chip with explicit `Before` / `During` / `After` timing, and a transition note before the next pour.
+- Watcher: new `flight_guest` task body in [`watcher/src/render.js`](watcher/src/render.js) — speaks directly to the guest, references kept food by name (not host-side prep), produces `{guest_intro, pour_walkthrough[]}` JSON. Reuses the existing `## Plan` parser unchanged; the only new render helper is `renderKeptFoodSection` which lays out the host's curated food as a markdown table the model can reference.
+
+### Decisions
+
+- **Reuse share_links for guest access vs separate per-plan token**: cuts the new surface area dramatically — no second expiry to track, no second revoke flow, no second RPC family. The single-active-share-link model already matches the "one tonight" semantics. The trade-off (guests with the link can also browse the wider cellar via the existing tabs) is fine for the use case (people you've invited to taste wine).
+- **Generate the walkthrough as the owner, not the guest**: keeps the flight_guest AI cost on the host's normal allowance and makes the Tonight tab cheap to load (no AI on the guest's first visit). Guests never spawn the request.
+- **One planned_flight per share_link, enforced by partial unique index**: matches the "one tonight" model. Surfacing the unique-index error in the UI as "Another plan is already attached to your active share link — detach it first" is cleaner than silently overwriting.
+- **Decant is advisory, not a user toggle**: came out of v0.9.12 feedback — toggling "I will decant" muddied who-said-what. Sommelier supplies the recommendation with a `why`, owner reads it, decides on the night. Preserving the AI-supplied decanters across other-field edits is done by capturing them as a closure variable in `wirePlannedDetail` rather than reading from the DOM.
+- **Picks + narrative captured at save time, not referenced**: planned_flights stores its own copy of the picks (with confidence/reasoning) and narrative. A bottle the owner later deletes still renders as a muted "Unknown bottle" placeholder; the plan stays meaningful.
+- **No prep exposed to guests**: chill / breathe / decanter info is host-side pre-game prep. Guests see what's on the table and what to do at the glass — the RPC explicitly omits the `prep` column.
+- **Auto-poll for enrichment on the planned-flight detail page**: after saving, the page subscribes-by-polling (re-fetches every 4 seconds for up to 5 minutes) until `food` or `prep` lands. Couldn't use the realtime channel pattern from `pairing-bus.js` cleanly because the table is `planned_flights`, not `pairing_responses` — and adding a new realtime publication just for this would be more setup than it's worth for a 2-minute wait.
+
+### Validation
+
+- All touched JS files (`app.js`, `planned-flights.js`, `pairing-bus.js`, `pairings.js`, `guest.js`) syntax-check clean; both watcher files (`render.js`, `parse.js`) syntax-check clean. esbuild bundle builds in ~15ms; bundle grew from ~69 KB to ~76 KB.
+- Watcher restarted (PID 13740 as of v0.10.0); both realtime channels `SUBSCRIBED`; no errors in the err log.
+- Owner already applied 0012 and verified the planned-flight save → enrichment → detail page flow end-to-end.
+- 0013 still pending owner application before the guest plan view will work — until then the Guest view section on the detail page will fail at `attachPlannedFlightToShare` (column doesn't exist) and the Tonight tab RPC call will 404.
+
+### Next
+
+Owner applies migration 0013, then tests the guest walkthrough flow end-to-end (build → save → attach → generate walkthrough → open share URL in a private window → confirm Tonight tab is default-active and renders the welcome / food / per-pour blocks correctly). After that this slice is done.
+
+---
+
 ## 2026-05-01 (late morning) — watcher: self-death email path
 
 ### Built
