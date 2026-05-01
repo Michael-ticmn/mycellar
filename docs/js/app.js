@@ -750,6 +750,32 @@ async function withBusySubmit(form, resultEl, msg, fn) {
     if (submitBtn) submitBtn.disabled = false;
   }
 }
+
+// In-memory cache of the most recent rendered AI result panel per view,
+// keyed by a short string. Lets us restore the recommendations + narrative
+// when the user clicks into a bottle and then navigates back — otherwise
+// the result panel would be empty and they'd lose the context they were
+// reading. Cleared only by a fresh submit (which overwrites) or page
+// reload (in-memory only — intentional; we don't want stale results
+// surviving days of inactivity).
+const _aiResultCache = new Map();
+function cacheResult(key, resultEl) {
+  if (resultEl?.innerHTML?.trim()) _aiResultCache.set(key, resultEl.innerHTML);
+}
+function restoreResult(key, resultEl) {
+  const html = _aiResultCache.get(key);
+  if (!html || !resultEl) return false;
+  resultEl.innerHTML = html;
+  // Re-wire bottle-card click handlers — they're lost when innerHTML is
+  // replaced (raw innerHTML doesn't carry attached listeners).
+  $$('[data-bottle-id]', resultEl).forEach((node) => {
+    node.addEventListener('click', () => {
+      const id = node.dataset.bottleId;
+      if (id) location.hash = `#/bottle/${id}`;
+    });
+  });
+  return true;
+}
 async function renderRecommendations(resultEl, response) {
   const recs = Array.isArray(response.recommendations) ? response.recommendations : [];
   const cards = await Promise.all(recs.map(async (r) => {
@@ -981,6 +1007,7 @@ function mountPairing() {
   const form = $('#pairing-form');
   const result = $('#pairing-result');
   if (!form) return;
+  restoreResult('pairing', result);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
@@ -992,6 +1019,7 @@ function mountPairing() {
         constraints: fd.get('constraints')?.trim() || null,
       });
       await renderRecommendations(result, response);
+      cacheResult('pairing', result);
     });
   });
 }
@@ -1000,6 +1028,7 @@ function mountFlight() {
   const form = $('#flight-form');
   const result = $('#flight-result');
   if (form) {
+    restoreResult('flight', result);
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
@@ -1010,12 +1039,14 @@ function mountFlight() {
           length: numOrNull(fd.get('length')) ?? 3,
         });
         await renderRecommendations(result, response);
+        cacheResult('flight', result);
       });
     });
   }
   const extrasForm = $('#flight-extras-form');
   const extrasResult = $('#flight-extras-result');
   if (extrasForm) {
+    restoreResult('flight-extras', extrasResult);
     extrasForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(extrasForm);
@@ -1027,6 +1058,7 @@ function mountFlight() {
         extrasResult.innerHTML = response.narrative
           ? narrativeBlockHTML(response.narrative, { heading: 'Suggestions', headingTag: 'h3' })
           : '<p class="muted">(no suggestions)</p>';
+        cacheResult('flight-extras', extrasResult);
       });
     });
   }
@@ -1037,12 +1069,14 @@ async function mountDrinkNow() {
   const dnForm = $('#drink-now-form');
   const dnResult = $('#drink-now-result');
   if (dnForm) {
+    restoreResult('drink-now', dnResult);
     dnForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(dnForm);
       await withBusySubmit(dnForm, dnResult, 'Asking your sommelier…', async () => {
         const { response } = await requestDrinkNow({ notes: fd.get('notes')?.trim() || null });
         await renderRecommendations(dnResult, response);
+        cacheResult('drink-now', dnResult);
       });
     });
   }
