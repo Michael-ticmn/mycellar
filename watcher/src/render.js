@@ -60,7 +60,15 @@ function expectedCount(type) {
 function taskFor(type, ctx = {}) {
   switch (type) {
     case 'pairing':
-      return `Pick 1–2 bottles from the cellar that pair best with the dish/context above. Consider sweetness, acidity, weight, and tannin in relation to the food. Prefer bottles in or entering their drink window. Avoid past-peak unless the user asked specifically. If quantity is 1, weigh whether opening it now is worth it.`;
+      return `Pick 1–2 bottles from the cellar that pair best with the dish/context above. Consider sweetness, acidity, weight, and tannin in relation to the food. Prefer bottles in or entering their drink window. Avoid past-peak unless the user asked specifically. If quantity is 1, weigh whether opening it now is worth it.
+
+ALSO always end the Narrative with a short "buy suggestion" section recommending exactly 1 specific wine (producer + wine name + vintage range, NOT from the cellar above) that would pair well with this dish, with an approximate retail price range. Frame it three ways depending on how strong your in-cellar pick was:
+
+  - Cellar pick is **high confidence** → start the section with a level-3 heading "### Optional buy" and one sentence framing it as "if you want to expand your range for dishes like this, also worth picking up…"
+  - Cellar pick is **medium confidence** → "### Worth buying" with one sentence framing it as a meaningful upgrade for next time you cook this.
+  - Cellar pick is **low confidence**, OR your best pick required a real stretch → "### Better option" and frame it as "the wine that would actually nail this dish, if you're shopping" — make it clear the cellar pick is a compromise.
+
+Keep the buy suggestion to 2–3 sentences max plus the price range. Don't pad. The buy suggestion does NOT go in the Recommendations array — only the in-cellar picks do.`;
     case 'flight':
       if (ctx.kind === 'extras') {
         return `Suggest 1–2 specific wines (producer + wine name + vintage range, NOT from the user's cellar above) that would meaningfully round out their flight-building potential. ${ctx.theme_hint ? `Constraint or theme they're aiming for: ${ctx.theme_hint}.` : 'Look at gaps in their current cellar — varietals, regions, vintages, styles missing.'} For each suggestion include: producer + wine + vintage range, what flight it would unlock (with which existing bottles), why it fills a gap, and an approximate retail price range. Recommendations array stays EMPTY (these aren't owned); put the picks in the Narrative as a clearly formatted list.`;
