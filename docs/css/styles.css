@@ -787,3 +787,135 @@ body.guest-mode .topbar .userbox { display: none; }
 .guest-modal-card { position: relative; max-width: 28rem; width: 100%; max-height: 85vh; overflow: auto; background: var(--surface-1); border: 1px solid var(--surface-2); border-radius: 12px; padding: 1.25rem 1.25rem 1.5rem; }
 .guest-modal-close { position: absolute; top: 0.5rem; right: 0.5rem; background: transparent; border: 0; color: var(--muted); font-size: 1.1rem; cursor: pointer; padding: 0.4rem 0.6rem; }
 .bottle-row, .bottle-card { cursor: pointer; }
+
+/* ──────────── Planned flights ──────────── */
+.save-flight { margin-top: 1.5rem; }
+.save-flight-toggle {
+  background: var(--accent);
+  border-color: var(--accent-2);
+}
+.save-flight-form {
+  margin-top: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+.save-flight-form[hidden] { display: none; }
+.save-flight-hint { font-size: 0.85rem; margin: 0; }
+
+.planned-list { display: grid; gap: 1.5rem; }
+.planned-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+.planned-card {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  display: grid;
+  gap: 0.25rem;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.planned-card:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+.planned-card:focus { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.planned-card h3 { font-size: 1.05rem; margin: 0; }
+.planned-card-pending {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--accent-2);
+  border-radius: 999px;
+  color: var(--highlight);
+}
+
+.planned-detail .planned-header {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+.planned-detail .planned-header label {
+  display: grid;
+  gap: 0.25rem;
+}
+.planned-meta { margin: 0; }
+
+.planned-food .food-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem;
+  display: grid;
+  gap: 0.5rem;
+}
+.food-row {
+  display: grid;
+  grid-template-columns: 6rem minmax(8rem, 1fr) minmax(10rem, 2fr) auto;
+  gap: 0.4rem;
+  align-items: center;
+}
+.food-row [data-food-remove] {
+  padding: 0.25rem 0.6rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+.food-add-row { gap: 0.5rem; }
+@media (max-width: 640px) {
+  .food-row { grid-template-columns: 5rem 1fr auto; }
+  .food-row [data-food-field="description"] { grid-column: 1 / -1; }
+}
+
+.planned-prep .prep-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.75rem;
+}
+.prep-table th, .prep-table td {
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--surface-2);
+}
+.prep-table thead th {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.prep-table input[type="number"] { width: 5rem; }
+.prep-table input[type="text"]   { width: 100%; min-width: 6rem; }
+.prep-decant {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.prep-notes-label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.planned-notes textarea,
+.prep-notes-label textarea {
+  width: 100%;
+  font: inherit;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 0.5rem;
+}
+
+.planned-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+  align-items: center;
+}
+.planned-error { margin: 0 0 0 auto; }

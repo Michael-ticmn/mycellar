@@ -3,6 +3,10 @@ import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottl
 import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
 import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } from './pairings.js';
 import {
+  listPlannedFlights, getPlannedFlight, createPlannedFlight,
+  updatePlannedFlight, deletePlannedFlight, requestFlightPlanEnrichment,
+} from './planned-flights.js';
+import {
   startCamera, stopCamera, captureFrame,
   uploadCapture, submitScanRequest, waitForScanResponse,
   subscribeForResponse, signedUrlForImage, requestEnrichment,
@@ -25,7 +29,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 // ── Routing (hash-based, supports `bottle/<id>`) ──────────────────
-const ROUTES = ['cellar', 'add', 'edit', 'pairing', 'flight', 'drink-now', 'manage', 'scan', 'bottle', 'guest', 'share'];
+const ROUTES = ['cellar', 'add', 'edit', 'pairing', 'flight', 'planned', 'drink-now', 'manage', 'scan', 'bottle', 'guest', 'share'];
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
   const [route, ...params] = h.split('/');
@@ -90,6 +94,7 @@ async function mountView(route, params = []) {
     case 'drink-now':  return mountDrinkNow();
     case 'pairing':    return mountPairing();
     case 'flight':     return mountFlight();
+    case 'planned':    return mountPlanned(params[0]);
     case 'manage':     return mountManage();
     case 'scan':       return mountManage(); // legacy alias
     case 'bottle':     return mountBottleDetail(params[0]);
@@ -774,9 +779,14 @@ function restoreResult(key, resultEl) {
       if (id) location.hash = `#/bottle/${id}`;
     });
   });
+  // The Save-flight form needs the original response object to function
+  // and we don't keep that across navigations — strip it so the user
+  // doesn't click an inert button. Resubmitting the form yields a fresh
+  // savable result.
+  $$('.save-flight', resultEl).forEach((n) => n.remove());
   return true;
 }
-async function renderRecommendations(resultEl, response) {
+async function renderRecommendations(resultEl, response, opts = {}) {
   const recs = Array.isArray(response.recommendations) ? response.recommendations : [];
   const cards = await Promise.all(recs.map(async (r) => {
     let bottle = null;
@@ -798,17 +808,95 @@ async function renderRecommendations(resultEl, response) {
     </article>`;
   }));
   const narrative = narrativeBlockHTML(response.narrative, { heading: 'Narrative' });
+  const saveSection = opts.savable ? saveFlightFormHTML() : '';
   resultEl.innerHTML = `
     ${narrative}
     <section>
       <h2>Picks</h2>
       <div class="grid">${cards.join('') || '<p class="muted">(no recommendations)</p>'}</div>
-    </section>`;
+    </section>
+    ${saveSection}`;
   $$('[data-bottle-id]', resultEl).forEach((node) => {
     node.addEventListener('click', () => {
       const id = node.dataset.bottleId;
       if (id) location.hash = `#/bottle/${id}`;
     });
+  });
+  if (opts.savable) wireSaveFlight(resultEl, response, opts.context || {});
+}
+
+// Inline form rendered below a flight builder result so the user can
+// promote it to a planned flight. Hidden until the user clicks "Save".
+function saveFlightFormHTML() {
+  return `<section class="save-flight">
+    <button type="button" class="save-flight-toggle" data-save-flight-toggle>Save this flight</button>
+    <form class="save-flight-form" data-save-flight-form hidden>
+      <label>Title (optional)
+        <input name="title" placeholder="e.g. Saturday with Mike" />
+      </label>
+      <label>Occasion date (optional)
+        <input name="occasion_date" type="date" />
+      </label>
+      <div class="row">
+        <button type="submit">Save flight &amp; plan</button>
+        <button type="button" class="ghost" data-save-flight-cancel>Cancel</button>
+      </div>
+      <p class="muted save-flight-hint">After saving we'll ask the sommelier to suggest food and prep — you can edit anything.</p>
+    </form>
+  </section>`;
+}
+
+function wireSaveFlight(resultEl, response, context) {
+  const toggle = $('[data-save-flight-toggle]', resultEl);
+  const form   = $('[data-save-flight-form]', resultEl);
+  const cancel = $('[data-save-flight-cancel]', resultEl);
+  if (!toggle || !form) return;
+  toggle.addEventListener('click', () => {
+    form.hidden = false;
+    toggle.hidden = true;
+    form.querySelector('input[name="title"]')?.focus();
+  });
+  cancel?.addEventListener('click', () => {
+    form.hidden = true;
+    toggle.hidden = false;
+  });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      const picks = (response.recommendations || []).map((r) => ({
+        bottle_id:  r.bottle_id,
+        confidence: r.confidence || null,
+        reasoning:  r.reasoning  || null,
+      }));
+      const saved = await createPlannedFlight({
+        title:             fd.get('title')?.toString().trim() || null,
+        occasion_date:     fd.get('occasion_date')?.toString() || null,
+        source_request_id: response.request_id || null,
+        theme:             context.theme  ?? null,
+        guests:            context.guests ?? null,
+        narrative:         response.narrative || '',
+        picks,
+      });
+      // Fire-and-forget the AI enrichment — the detail page subscribes
+      // to the response itself, so we don't have to await it here.
+      requestFlightPlanEnrichment(saved).catch((err) => {
+        console.error('flight_plan enrichment failed:', err);
+      });
+      location.hash = `#/planned/${saved.id}`;
+    } catch (err) {
+      const errEl = form.querySelector('.error') || (() => {
+        const p = document.createElement('p');
+        p.className = 'error';
+        form.appendChild(p);
+        return p;
+      })();
+      errEl.textContent = err?.message || String(err);
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
   });
 }
 
@@ -1033,12 +1121,17 @@ function mountFlight() {
       e.preventDefault();
       const fd = new FormData(form);
       await withBusySubmit(form, result, 'Building the flight… (this may take a couple of minutes)', async () => {
-        const { response } = await requestFlight({
-          theme: fd.get('theme'),
-          guests: numOrNull(fd.get('guests')) ?? 4,
-          length: numOrNull(fd.get('length')) ?? 3,
+        const theme  = fd.get('theme');
+        const guests = numOrNull(fd.get('guests')) ?? 4;
+        const length = numOrNull(fd.get('length')) ?? 3;
+        const { request, response } = await requestFlight({ theme, guests, length });
+        // Stamp the request id onto the response so the Save handler can
+        // record source_request_id without having to refetch.
+        response.request_id = request.id;
+        await renderRecommendations(result, response, {
+          savable: true,
+          context: { theme, guests, length },
         });
-        await renderRecommendations(result, response);
         cacheResult('flight', result);
       });
     });
@@ -1062,6 +1155,325 @@ function mountFlight() {
       });
     });
   }
+}
+
+// ── Planned flights ───────────────────────────────────────────────
+
+async function mountPlanned(id) {
+  const root = $('#planned-root');
+  if (!root) return;
+  if (id) await mountPlannedDetail(root, id);
+  else    await mountPlannedList(root);
+}
+
+async function mountPlannedList(root) {
+  root.innerHTML = `<h1>Planned flights</h1>
+    <p class="muted">Flights you've saved from the Flight builder, with food and prep notes for the night.</p>
+    <div id="planned-list" class="planned-list">Loading…</div>`;
+  let plans;
+  try { plans = await listPlannedFlights(); }
+  catch (e) {
+    $('#planned-list', root).innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
+    return;
+  }
+  if (!plans.length) {
+    $('#planned-list', root).innerHTML = `<p class="muted">No planned flights yet. Build one in the
+      <a href="#/flight">Flight builder</a> and click <em>Save this flight</em> to plan the evening.</p>`;
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = [], undated = [], past = [];
+  for (const p of plans) {
+    if (!p.occasion_date) undated.push(p);
+    else if (p.occasion_date >= today) upcoming.push(p);
+    else past.push(p);
+  }
+  const section = (title, list) => list.length
+    ? `<section><h2>${title}</h2><div class="planned-cards">${list.map(plannedCardHTML).join('')}</div></section>`
+    : '';
+  $('#planned-list', root).innerHTML = [
+    section('Upcoming', upcoming),
+    section('Undated',  undated),
+    section('Past',     past),
+  ].filter(Boolean).join('') || '<p class="muted">(nothing here yet)</p>';
+  $$('[data-planned-id]', root).forEach((node) => {
+    node.addEventListener('click', () => {
+      location.hash = `#/planned/${node.dataset.plannedId}`;
+    });
+  });
+}
+
+function plannedCardHTML(p) {
+  const date = p.occasion_date
+    ? new Date(p.occasion_date + 'T00:00:00').toLocaleDateString('en-US',
+        { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+    : '';
+  const picksCount = Array.isArray(p.picks) ? p.picks.length : 0;
+  const themeLabel = p.theme ? p.theme.replace(/_/g, ' ') : '';
+  const enrichmentState = (p.food == null && p.prep == null)
+    ? '<span class="planned-card-pending">plan pending</span>'
+    : '';
+  return `<article class="planned-card" data-planned-id="${escapeAttr(p.id)}" tabindex="0">
+    <h3>${escapeHtml(p.title || 'Untitled flight')}</h3>
+    <p class="muted">${escapeHtml(date)}${date && themeLabel ? ' · ' : ''}${escapeHtml(themeLabel)}</p>
+    <p class="muted">${picksCount} bottle${picksCount === 1 ? '' : 's'} ${enrichmentState}</p>
+  </article>`;
+}
+
+async function mountPlannedDetail(root, id) {
+  root.innerHTML = '<p class="muted">Loading…</p>';
+  let plan;
+  try { plan = await getPlannedFlight(id); }
+  catch (e) { root.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`; return; }
+  if (!plan) { root.innerHTML = '<p class="muted">Planned flight not found.</p>'; return; }
+
+  await renderPlannedDetail(root, plan);
+
+  // If enrichment hasn't landed yet, poll for it. The save flow fires the
+  // request in the background; we just watch the row for food/prep
+  // appearing. Bounded so a watcher outage doesn't poll forever.
+  if (plan.food == null && plan.prep == null) pollForEnrichment(root, plan.id);
+}
+
+async function pollForEnrichment(root, id) {
+  const deadline = Date.now() + 5 * 60_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 4000));
+    // Stop if the user navigated away.
+    if (!document.body.contains(root) || location.hash !== `#/planned/${id}`) return;
+    let fresh;
+    try { fresh = await getPlannedFlight(id); }
+    catch { continue; }
+    if (!fresh) return;
+    if (fresh.food != null || fresh.prep != null) {
+      await renderPlannedDetail(root, fresh);
+      return;
+    }
+  }
+}
+
+async function renderPlannedDetail(root, plan) {
+  // Pre-fetch each pick's bottle so we can show producer/varietal next to
+  // its prep row. Tolerant of deleted bottles (unknown id renders muted).
+  const picks = Array.isArray(plan.picks) ? plan.picks : [];
+  const bottles = await Promise.all(picks.map(async (p) => {
+    try { return { pick: p, bottle: await getBottle(p.bottle_id) }; }
+    catch { return { pick: p, bottle: null }; }
+  }));
+
+  const headerHTML = `
+    <header class="planned-header">
+      <label>Title <input type="text" data-field="title" value="${escapeAttr(plan.title || '')}" placeholder="Untitled flight" /></label>
+      <label>Occasion date <input type="date" data-field="occasion_date" value="${escapeAttr(plan.occasion_date || '')}" /></label>
+      <p class="muted planned-meta">
+        ${plan.theme ? `Theme: ${escapeHtml(plan.theme.replace(/_/g, ' '))}` : ''}
+        ${plan.guests ? ` · ${plan.guests} guests` : ''}
+      </p>
+    </header>`;
+
+  const narrativeHTML = plan.narrative
+    ? narrativeBlockHTML(plan.narrative, { heading: 'Narrative' })
+    : '';
+
+  const picksHTML = `<section><h2>Picks</h2>
+    <div class="grid">${bottles.map(({ pick, bottle }) => bottle ? `
+      <article class="bottle-card" data-bottle-id="${escapeAttr(bottle.id)}" data-style="${escapeAttr(bottle.style || '')}" tabindex="0">
+        <div class="bottle-photo placeholder">${escapeHtml((bottle.producer || '?')[0])}</div>
+        <div class="bottle-meta">
+          <h3>${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}</h3>
+          <p class="muted">${escapeHtml(bottle.varietal)}${bottle.vintage ? ` · ${bottle.vintage}` : ''}</p>
+          ${pick.reasoning ? `<p>${escapeHtml(pick.reasoning)}</p>` : ''}
+        </div>
+      </article>` : `<article class="bottle-card"><div class="bottle-meta">
+        <h3 class="muted">Unknown bottle</h3>
+        <p class="muted">id: ${escapeHtml(pick.bottle_id)}</p>
+      </div></article>`).join('')}</div>
+  </section>`;
+
+  const enrichmentPending = (plan.food == null && plan.prep == null);
+
+  const foodHTML = `<section class="planned-food"><h2>Food</h2>
+    ${enrichmentPending
+      ? '<p class="muted">Sommelier is preparing food suggestions…</p>'
+      : renderFoodEditor(plan.food || [])}
+  </section>`;
+
+  const prepHTML = `<section class="planned-prep"><h2>Preparation</h2>
+    ${enrichmentPending
+      ? '<p class="muted">Sommelier is preparing serving notes…</p>'
+      : renderPrepEditor(plan.prep || {}, bottles)}
+  </section>`;
+
+  const notesHTML = `<section class="planned-notes"><h2>Your notes</h2>
+    <textarea data-field="user_notes" rows="3" placeholder="Anything else for the night…">${escapeHtml(plan.user_notes || '')}</textarea>
+  </section>`;
+
+  const actionsHTML = `<section class="planned-actions">
+    <button type="button" class="ghost" data-action="reask"${enrichmentPending ? ' disabled' : ''}>Re-ask the sommelier</button>
+    <button type="button" class="ghost" data-action="delete">Delete this plan</button>
+    <p class="error planned-error" hidden></p>
+  </section>`;
+
+  root.innerHTML = headerHTML + narrativeHTML + picksHTML + foodHTML + prepHTML + notesHTML + actionsHTML;
+
+  wirePlannedDetail(root, plan);
+}
+
+function renderFoodEditor(food) {
+  const items = Array.isArray(food) ? food : [];
+  const rows = items.map((item, i) => `
+    <li class="food-row" data-food-idx="${i}">
+      <select data-food-field="kind">
+        <option value="meal"  ${item.kind === 'meal'  ? 'selected' : ''}>Meal</option>
+        <option value="snack" ${item.kind === 'snack' ? 'selected' : ''}>Snack</option>
+      </select>
+      <input type="text" data-food-field="name" value="${escapeAttr(item.name || '')}" placeholder="Dish or snack" />
+      <input type="text" data-food-field="description" value="${escapeAttr(item.description || '')}" placeholder="Notes (optional)" />
+      <button type="button" class="ghost" data-food-remove>×</button>
+    </li>`).join('');
+  return `<ul class="food-list">${rows || '<li class="muted">No food yet. Add one below.</li>'}</ul>
+    <div class="row food-add-row">
+      <button type="button" data-food-add="meal">+ Meal</button>
+      <button type="button" data-food-add="snack">+ Snack</button>
+    </div>`;
+}
+
+function renderPrepEditor(prep, bottles) {
+  const chillBy   = (id) => (prep.chill    || []).find((x) => x.bottle_id === id) || {};
+  const openByOf  = (id) => (prep.open_by  || []).find((x) => x.bottle_id === id) || {};
+  const decantOf  = (id) => (prep.decanters || []).find((x) => x.bottle_id === id);
+  const glassOf   = (id) => (prep.glassware || []).find((x) => x.bottle_id === id) || {};
+  const rows = bottles.map(({ pick, bottle }) => {
+    const id = pick.bottle_id;
+    const name = bottle ? `${bottle.producer}${bottle.wine_name ? ' · ' + bottle.wine_name : ''}` : 'Unknown bottle';
+    return `<tr data-prep-bottle="${escapeAttr(id)}">
+      <th scope="row">${escapeHtml(name)}</th>
+      <td><input type="number" min="0" max="600" step="5" data-prep-field="chill"   value="${escapeAttr(chillBy(id).minutes ?? '')}"  placeholder="min" /></td>
+      <td><input type="number" min="0" max="600" step="5" data-prep-field="open_by" value="${escapeAttr(openByOf(id).minutes ?? '')}" placeholder="min" /></td>
+      <td><label class="prep-decant"><input type="checkbox" data-prep-field="decant" ${decantOf(id) ? 'checked' : ''} /> Decant</label></td>
+      <td><input type="text" data-prep-field="glassware" value="${escapeAttr(glassOf(id).type || '')}" placeholder="e.g. Burgundy" /></td>
+    </tr>`;
+  }).join('');
+  return `<table class="prep-table">
+    <thead><tr><th></th><th>Chill</th><th>Open by</th><th></th><th>Glass</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5" class="muted">No bottles to prep.</td></tr>'}</tbody>
+  </table>
+  <label class="prep-notes-label">Other notes
+    <textarea data-prep-field="notes" rows="2" placeholder="Anything else…">${escapeHtml(prep.notes || '')}</textarea>
+  </label>`;
+}
+
+function wirePlannedDetail(root, plan) {
+  const id = plan.id;
+  const errEl = $('.planned-error', root);
+  const showErr = (msg) => {
+    if (!errEl) return;
+    errEl.hidden = !msg;
+    errEl.textContent = msg || '';
+  };
+
+  // Bottle-card click → bottle detail
+  $$('[data-bottle-id]', root).forEach((node) => {
+    node.addEventListener('click', () => {
+      location.hash = `#/bottle/${node.dataset.bottleId}`;
+    });
+  });
+
+  // Header field commits on blur (or change for date input)
+  for (const field of ['title', 'occasion_date', 'user_notes']) {
+    const el = $(`[data-field="${field}"]`, root);
+    if (!el) continue;
+    el.addEventListener('change', async () => {
+      const v = el.value.trim();
+      try { await updatePlannedFlight(id, { [field]: v || null }); showErr(''); }
+      catch (e) { showErr(e.message); }
+    });
+  }
+
+  // Food add/edit/remove — recompute the full food array on every change
+  // and PATCH it. Cheap, correct, and avoids per-row state.
+  const collectFood = () => {
+    return $$('.food-row', root).map((li) => ({
+      kind:        li.querySelector('[data-food-field="kind"]')?.value || 'meal',
+      name:        li.querySelector('[data-food-field="name"]')?.value || '',
+      description: li.querySelector('[data-food-field="description"]')?.value || '',
+    }));
+  };
+  const persistFood = async () => {
+    try { await updatePlannedFlight(id, { food: collectFood() }); showErr(''); }
+    catch (e) { showErr(e.message); }
+  };
+
+  $$('[data-food-add]', root).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const food = collectFood();
+      food.push({ kind: btn.dataset.foodAdd, name: '', description: '' });
+      try { await updatePlannedFlight(id, { food }); showErr(''); }
+      catch (e) { showErr(e.message); return; }
+      const fresh = await getPlannedFlight(id);
+      if (fresh) await renderPlannedDetail(root, fresh);
+    });
+  });
+  $$('.food-row', root).forEach((li) => {
+    li.querySelector('[data-food-remove]')?.addEventListener('click', async () => {
+      li.remove();
+      await persistFood();
+    });
+    li.querySelectorAll('[data-food-field]').forEach((el) => {
+      el.addEventListener('change', persistFood);
+    });
+  });
+
+  // Prep — same recompute-and-patch pattern
+  const collectPrep = () => {
+    const chill = [], open_by = [], decanters = [], glassware = [];
+    $$('[data-prep-bottle]', root).forEach((tr) => {
+      const bottleId = tr.dataset.prepBottle;
+      const chillVal   = numOrNull(tr.querySelector('[data-prep-field="chill"]')?.value);
+      const openByVal  = numOrNull(tr.querySelector('[data-prep-field="open_by"]')?.value);
+      const decantVal  = tr.querySelector('[data-prep-field="decant"]')?.checked;
+      const glassVal   = tr.querySelector('[data-prep-field="glassware"]')?.value.trim();
+      if (chillVal != null)  chill.push({ bottle_id: bottleId, minutes: chillVal });
+      if (openByVal != null) open_by.push({ bottle_id: bottleId, minutes: openByVal });
+      if (decantVal)         decanters.push({ bottle_id: bottleId });
+      if (glassVal)          glassware.push({ bottle_id: bottleId, type: glassVal });
+    });
+    const notes = $('[data-prep-field="notes"]', root)?.value.trim() || null;
+    return { chill, open_by, decanters, glassware, notes };
+  };
+  const persistPrep = async () => {
+    try { await updatePlannedFlight(id, { prep: collectPrep() }); showErr(''); }
+    catch (e) { showErr(e.message); }
+  };
+  $$('[data-prep-field]', root).forEach((el) => {
+    el.addEventListener('change', persistPrep);
+  });
+
+  // Re-ask
+  $('[data-action="reask"]', root)?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Asking…';
+    try {
+      const fresh = await getPlannedFlight(id);
+      await requestFlightPlanEnrichment(fresh);
+      const updated = await getPlannedFlight(id);
+      if (updated) await renderPlannedDetail(root, updated);
+    } catch (err) {
+      showErr(err.message);
+      btn.disabled = false;
+      btn.textContent = 'Re-ask the sommelier';
+    }
+  });
+
+  // Delete
+  $('[data-action="delete"]', root)?.addEventListener('click', async () => {
+    if (!confirm('Delete this planned flight?')) return;
+    try {
+      await deletePlannedFlight(id);
+      location.hash = '#/planned';
+    } catch (e) { showErr(e.message); }
+  });
 }
 
 // ── Drink-now ─────────────────────────────────────────────────────

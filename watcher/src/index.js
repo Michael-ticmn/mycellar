@@ -323,6 +323,7 @@ async function ingestPairingResponse(path) {
     request_id: requestId,
     recommendations: parsed.recommendations,
     narrative: parsed.narrative,
+    payload: parsed.payload,
   });
   if (insErr) throw insErr;
 

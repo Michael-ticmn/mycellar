@@ -74,10 +74,14 @@ function parseRecommendations(text) {
 
 export function parsePairingResponse(text) {
   const { frontmatter, body } = splitFrontmatter(text);
+  // ## Plan section is only emitted by flight_plan responses; for every
+  // other request_type it'll be missing and payload stays null.
+  const plan = extractJson(section(body, 'Plan'));
   return {
     frontmatter,
     recommendations: parseRecommendations(section(body, 'Recommendations')),
     narrative: section(body, 'Narrative') || null,
+    payload: plan || null,
   };
 }
 

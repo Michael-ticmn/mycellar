@@ -54,7 +54,10 @@ function bottlesTable(snapshot, includeQty = true) {
 }
 
 function expectedCount(type) {
-  return type === 'pairing' ? '1-2' : type === 'flight' ? '3-5' : '1-3';
+  if (type === 'pairing')     return '1-2';
+  if (type === 'flight')      return '3-5';
+  if (type === 'flight_plan') return '0';
+  return '1-3';
 }
 
 // Shared instruction appended to every task. The model has a habit of
@@ -92,6 +95,20 @@ Keep the buy suggestion to 2–3 sentences max plus the price range. Don't pad. 
     case 'drink_now':
       body = `Pick 1–3 bottles to drink soon. Prioritize bottles entering or already in peak window over later vintages. Consider quantity (don't recommend the last bottle of a hard-to-replace wine unless asked).`;
       break;
+    case 'flight_plan':
+      body = `The user has saved a tasting flight (see ## Saved flight) and wants you to plan the evening around it. Produce two things:
+
+1) **Food** — 2–4 specific suggestions that work across the flight. Mark each as either a "meal" (a real plated course) or a "snack" (something to nibble between pours, or while talking before pour 1). Aim for one snack and one or two meal options unless the bottles strongly suggest otherwise. For each item give a short name and a one-sentence description.
+
+2) **Prep** — concrete serving instructions per bottle:
+   - chill: minutes in the fridge before pour (0 if it's already at serving temp; omit the line entirely if no chill needed)
+   - open_by: minutes ahead to pull the cork to let the bottle breathe (omit if no breathing needed)
+   - decant: include the bottle if it should be decanted, with a one-line "why"
+   - glassware: type per bottle (Burgundy, Bordeaux, white, flute, universal, etc.)
+   Plus a "notes" field with anything else (order of service if non-obvious, palate-cleanser, when to pour the snack, etc.).
+
+Use the picks from ## Saved flight — do NOT recommend other bottles. The Recommendations array in the response stays empty.`;
+      break;
     default:
       return `Unrecognized request_type: ${type}.`;
   }
@@ -108,6 +125,63 @@ respond_to: ${respondToPath}
 ---`;
 
   const contextStr = JSON.stringify(row.context || {}, null, 2);
+
+  // flight_plan operates on bottles already chosen — render the saved
+  // flight as its own section and skip the wider cellar (the user isn't
+  // asking us to repick).
+  if (row.request_type === 'flight_plan') {
+    const savedFlightSection = renderSavedFlightSection(row.context || {});
+    return `${fm}
+
+# cellar27 request
+
+## Today
+${todaySection(weather)}
+
+## Context
+\`\`\`json
+${contextStr}
+\`\`\`
+
+${savedFlightSection}
+
+## Task
+${taskFor(row.request_type, row.context)}
+
+## Response format
+Write the response file at the path in \`respond_to\` with this structure:
+
+\`\`\`markdown
+---
+request_id: ${row.id}
+completed: <ISO timestamp>
+---
+
+## Recommendations
+_(empty for flight_plan — the picks were already saved)_
+
+## Plan
+\`\`\`json
+{
+  "food": [
+    { "kind": "meal",  "name": "...", "description": "..." },
+    { "kind": "snack", "name": "...", "description": "..." }
+  ],
+  "prep": {
+    "chill":     [{ "bottle_id": "<uuid from Saved flight>", "minutes": 30 }],
+    "open_by":   [{ "bottle_id": "<uuid>", "minutes": 60 }],
+    "decanters": [{ "bottle_id": "<uuid>", "why": "young, tight tannins" }],
+    "glassware": [{ "bottle_id": "<uuid>", "type": "Burgundy" }],
+    "notes": "..."
+  }
+}
+\`\`\`
+
+## Narrative
+_(optional — short paragraph framing the night, or omit entirely)_
+\`\`\`
+`;
+  }
 
   return `${fm}
 
@@ -146,6 +220,36 @@ completed: <ISO timestamp>
 <markdown — 2-4 paragraphs, the thoughtful take. This is what the user actually reads.>
 \`\`\`
 `;
+}
+
+// Render the picks + narrative from a saved planned flight as a markdown
+// section the agent can reason about. The id column is critical — the
+// food/prep response must reference the same bottle_ids.
+function renderSavedFlightSection(ctx) {
+  const picks = Array.isArray(ctx.picks) ? ctx.picks : [];
+  const head = '| bottle_id | confidence | reasoning |';
+  const sep  = '|-----------|------------|-----------|';
+  const rows = picks.map((p) => {
+    const reasoning = (p.reasoning || '').replace(/\|/g, '\\|').replace(/\n+/g, ' ');
+    return `| ${p.bottle_id} | ${p.confidence || ''} | ${reasoning} |`;
+  }).join('\n') || '_(no picks)_';
+  const meta = [
+    ctx.title         ? `**Title:** ${ctx.title}` : null,
+    ctx.occasion_date ? `**Occasion date:** ${ctx.occasion_date}` : null,
+    ctx.theme         ? `**Theme:** ${ctx.theme}` : null,
+    ctx.guests        ? `**Guests:** ${ctx.guests}` : null,
+  ].filter(Boolean).join(' · ');
+  const narrative = ctx.narrative
+    ? `\n### Original sommelier narrative\n${ctx.narrative}\n`
+    : '';
+  return `## Saved flight
+${meta || '_(no metadata)_'}
+
+### Picks
+${head}
+${sep}
+${rows}
+${narrative}`;
 }
 
 // images: array of { label: 'front'|'back'|..., path: '<absolute local path>' }
