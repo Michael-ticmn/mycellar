@@ -26,3 +26,14 @@ This repo is a monorepo:
 ## Where to start
 
 If you're picking this up: read STRATEGY.md, then BUILD_SPEC.md, then check CURRENT_STATE.md for what's queued next. The handoff pattern is: Chat decides → Code executes → BUILD_LOG entry → CURRENT_STATE flips.
+
+## Building the frontend bundle
+
+`docs/js/app.js` and its imports are bundled and minified into [`docs/js/dist/app.bundle.js`](docs/js/dist/app.bundle.js) for production. Rebuild after editing any `docs/js/*.js` file:
+
+```
+npm install            # one-time, installs esbuild
+npm run build:docs     # bundles + minifies into docs/js/dist/
+```
+
+Bump [`docs/version.js`](docs/version.js) so the service worker invalidates the old cache. The committed bundle is what GitHub Pages serves — there is no CI build step.

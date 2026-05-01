@@ -2,10 +2,15 @@
 
 ## Pending
 
-(empty)
+- [ ] [owner] Apply migration [`supabase/migrations/0006_search_path_hardening.sql`](supabase/migrations/0006_search_path_hardening.sql) in the Supabase SQL Editor (idempotent; re-runs the three security-definer functions with locked-down `search_path` and schema-qualified table refs).
+- [ ] [owner] Restart the watcher to pick up the v0.9.0 hardening (env filtering for spawned Claude, LRU rate-limit map, fail-fast realtime/chokidar handlers, parallel image downloads, graceful SIGINT/SIGTERM).
 
 ## Completed
 
+- [x] [Code, 2026-04-30] **v0.9.0 — top-10 hardening / modernization batch**:
+  - Watcher: env allowlist when spawning `claude` (no more SUPABASE_SERVICE_ROLE_KEY / SMTP_PASS leakage); LRU eviction on the rate-limit map (10k cap, prevents long-term memory leak); fail-fast on realtime CHANNEL_ERROR/TIMED_OUT/CLOSED, chokidar errors, and unhandledRejection (supervisor restarts a clean process); graceful SIGINT/SIGTERM that unsubscribes channels and closes the file watcher; parallel image downloads in scan requests (Promise.all → halves 2-image latency).
+  - SQL: migration 0006 hardens `search_path` to `pg_catalog, public` and schema-qualifies every table ref in the three security-definer functions.
+  - Frontend: esbuild bundle (`docs/js/dist/app.bundle.js`, ~46 KB minified vs ~83 KB raw); AbortController on view fetch (no more late-arriving HTML overwriting the current view); dynamic `config.local.js` loader (drops the inline `onerror` from index.html, CSP-ready).
 - [x] [Code, 2026-04-30] **`scripts/security-smoke-test.mjs`**: exercises allowlist predicate, DB rate limit RPC, in-flight cap trigger (5→6), and daily-ceiling RPC — all without spawning Claude. Self-cleans seed rows. Closes P1-3 from the original security plan.
 - [x] [Code, 2026-04-30] **Tier 1 + Tier 2 limit tuning**: DB rate limit 20→100/hr, watcher rate limit 20→100/hr (env-tunable), daily ceiling 100→250, email notify on limit hits via SMTP with per-key cooldown. ([507a778](https://github.com/Michael-ticmn/mycellar/commit/507a778))
 - [x] [Code, 2026-04-30] **docs/SECURITY.md**: single source of truth for all gates + tune/bypass cookbook. Unstaled ARCHITECTURE.md "Security shape". ([bf9cc4d](https://github.com/Michael-ticmn/mycellar/commit/bf9cc4d))

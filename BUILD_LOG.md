@@ -4,6 +4,45 @@
 
 ---
 
+## 2026-04-30 (PM) — v0.9.0: top-10 hardening / modernization batch
+
+### Built
+
+Curated punch list from a full audit of frontend / watcher / SQL — kept the items where the diff is small and the value is real, dropped the speculative ones (virtual scrolling, structured logging overhaul, broad innerHTML XSS audit). Plan in `~/.claude/plans/optimizations-modernixations-security-up-cached-kettle.md` if needed.
+
+**Watcher security & robustness**
+- [`watcher/src/agent.js`](watcher/src/agent.js): explicit env allowlist when spawning `claude`. Previously inherited the entire `process.env` — meaning every Claude session got `SUPABASE_SERVICE_ROLE_KEY`, `SMTP_PASS`, etc. it doesn't need. Now only `PATH`, `HOME`/`USERPROFILE`, OS shell essentials, and locale vars pass through.
+- [`watcher/src/policy.js`](watcher/src/policy.js): LRU on the rate-limit map. Re-insert on every hit to refresh insertion order; evict oldest if size > 10 000. Closes a slow memory leak (one-time users' UUIDs lived forever).
+- [`watcher/src/index.js`](watcher/src/index.js): fail-fast on realtime `CHANNEL_ERROR`/`TIMED_OUT`/`CLOSED`, on chokidar errors, on `unhandledRejection`, on `uncaughtException`. Pairs with the existing supervisor restart pattern. Graceful SIGINT/SIGTERM: tracks channel + watcher refs at startup, unsubscribes/closes on signal, then exits.
+
+**Watcher performance**
+- [`watcher/src/index.js`](watcher/src/index.js): scan-request image downloads now run in parallel via `Promise.all`. Two-image scans roughly halve in wall-clock time.
+
+**SQL**
+- [`supabase/migrations/0006_search_path_hardening.sql`](supabase/migrations/0006_search_path_hardening.sql): re-creates `cellar27_check_rate_limit`, `cellar27_sweep_stale_claims`, `cellar27_try_record_spawn` with `set search_path = pg_catalog, public` and fully schema-qualified table refs (`public.pairing_requests`, etc.). Best-practice hardening for `security definer` functions; closes the search-path-shadowing risk.
+
+**Frontend**
+- New root [`package.json`](package.json) with esbuild as dev dep + `npm run build:docs` script. Bundles [`docs/js/app.js`](docs/js/app.js) and its 6 imports into [`docs/js/dist/app.bundle.js`](docs/js/dist/app.bundle.js) — minified ESM, `target=es2022`, with sourcemap. ~46 KB minified vs ~83 KB raw across the original files.
+- [`docs/index.html`](docs/index.html): `<script type="module">` now points at the bundle; the inline `onerror="this.remove()"` on `config.local.js` is gone.
+- [`docs/js/app.js`](docs/js/app.js): `loadView()` uses an `AbortController`, aborts the previous fetch before starting a new one; the caller skips the assignment if the result is `null` (superseded). Bottom-of-file init now `await`s a JS-injected script tag for `config.local.js` (404s silently in production), keeping `index.html` free of inline event handlers — CSP-ready.
+- [`docs/sw.js`](docs/sw.js): SHELL list collapses the seven `js/*.js` entries down to one `js/dist/app.bundle.js` entry.
+- [`docs/version.js`](docs/version.js): `0.8.3` → `0.9.0`.
+
+**Audit hygiene**
+- esbuild pinned to `^0.25` (fixes the moderate-severity dev-server advisory; we don't run the dev server, but keeps `npm audit` clean).
+
+### Decisions
+- Bundle into a single ESM file rather than per-file minification: simpler `<script>` rewrite (one tag), simpler SW SHELL list, and esbuild's tree-shaking + minification work better across the whole graph.
+- Sourcemap committed alongside the bundle so DevTools on phone still maps to original sources for debugging — adds ~135 KB but only fetched on demand.
+- Fail-fast vs in-process retry for realtime errors: this watcher runs under a supervisor and is designed around long-lived restartability. Continuing in a half-broken state hides bugs; clean restart is the better default.
+
+### Owner action required
+1. Apply [`supabase/migrations/0006_search_path_hardening.sql`](supabase/migrations/0006_search_path_hardening.sql) in the Supabase SQL Editor.
+2. Restart the watcher to pick up `agent.js` / `policy.js` / `index.js` changes.
+3. Hard-refresh the PWA on phone after the v0.9.0 banner appears (existing manual update flow).
+
+---
+
 ## 2026-04-28 — Phase 1 scaffold landed
 
 ### Built

@@ -10,7 +10,8 @@ import { CONFIG } from './config.js';
 // its own check; this is the redundant backstop.
 const WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const MAX_PER_WINDOW = parseInt(process.env.WATCHER_RATE_LIMIT_PER_HOUR || '100', 10);
-const hits = new Map(); // user_id → number[] of timestamps
+const MAX_TRACKED_USERS = 10_000; // hard cap to bound memory
+const hits = new Map(); // user_id → number[] of timestamps (insertion-ordered)
 
 export function isAllowed(userId) {
   if (!CONFIG.allowedUserIds.size) return true; // empty allowlist = open mode
@@ -24,9 +25,23 @@ export function checkRateLimit(userId) {
     return { ok: false, reason: `rate limit: ${arr.length}/${MAX_PER_WINDOW} requests in last hour` };
   }
   arr.push(now);
+  // Re-insert to refresh insertion order so LRU eviction sees this as recent.
+  hits.delete(userId);
   hits.set(userId, arr);
+  // Bound the map: drop oldest insertion-ordered entries if past the cap.
+  if (hits.size > MAX_TRACKED_USERS) {
+    const toEvict = hits.size - MAX_TRACKED_USERS;
+    let evicted = 0;
+    for (const k of hits.keys()) {
+      hits.delete(k);
+      if (++evicted >= toEvict) break;
+    }
+  }
   return { ok: true };
 }
+
+// Test hook: exposes the current map size without leaking the map itself.
+export function _trackedUserCount() { return hits.size; }
 
 // Evaluates both gates; returns null if request can proceed,
 // or an error message if it should be rejected.

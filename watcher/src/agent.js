@@ -12,6 +12,28 @@ const ts = () => new Date().toISOString();
 const log = (...a) => console.log(ts(), '[agent]', ...a);
 const err = (...a) => console.error(ts(), '[agent]', ...a);
 
+// Don't hand watcher secrets (SUPABASE_SERVICE_ROLE_KEY, SMTP_PASS, etc.)
+// to the spawned Claude. Only pass vars Claude actually needs: PATH for
+// resolving the binary, HOME / USERPROFILE for the OAuth keychain, plus
+// the Windows shell essentials so .cmd shims work.
+const ENV_ALLOW = [
+  'PATH', 'HOME', 'USERPROFILE',
+  'APPDATA', 'LOCALAPPDATA',
+  'USERNAME', 'USER', 'LOGNAME',
+  'TEMP', 'TMP', 'TMPDIR',
+  'SystemRoot', 'SYSTEMROOT', 'SystemDrive', 'ComSpec', 'PATHEXT',
+  'LANG', 'LC_ALL', 'LC_CTYPE',
+  'TERM', 'COLORTERM',
+];
+
+function filteredEnv() {
+  const out = {};
+  for (const k of ENV_ALLOW) {
+    if (process.env[k] !== undefined) out[k] = process.env[k];
+  }
+  return out;
+}
+
 export function invokeBridgeAgent(requestFilePath) {
   if (!CONFIG.autoInvoke) {
     log(`auto-invoke disabled; leaving ${requestFilePath} for manual bridge agent`);
@@ -37,6 +59,7 @@ Read that file. It contains frontmatter (with a respond_to path you must write t
     cwd: CONFIG.bridgeDir,
     shell: process.platform === 'win32', // resolve .cmd shim on Windows
     stdio: ['pipe', 'pipe', 'pipe'],
+    env: filteredEnv(),
   });
 
   proc.stdin.write(prompt);

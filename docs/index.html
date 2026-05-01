@@ -19,10 +19,10 @@
   <!-- Version: single source for app + SW. Bumping forces an update. -->
   <script src="version.js"></script>
   <!-- Public config (committed) sets defaults. config.local.js (gitignored)
-       optionally overrides for local dev — its 404 on the deployed site
-       is harmless. -->
+       optionally overrides for local dev — loaded dynamically by app.js so
+       its 404 on the deployed site is silent and we don't need an inline
+       onerror handler (which would block any future CSP). -->
   <script src="config.public.js"></script>
-  <script src="config.local.js" onerror="this.remove()"></script>
   <!-- Supabase JS v2 from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -109,6 +109,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/dist/app.bundle.js"></script>
 </body>
 </html>

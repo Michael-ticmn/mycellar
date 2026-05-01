@@ -1,6 +1,6 @@
 # cellar27 — CURRENT_STATE.md
 
-## As of 2026-04-30 (post Phase 3 ship + security tuning + UX polish)
+## As of 2026-04-30 (v0.9.0 — top-10 hardening / modernization batch)
 
 **What exists and works:**
 
@@ -21,12 +21,24 @@
   - Email notification on limit hit (Gmail SMTP via App Password; cooldown-throttled).
 - End-to-end pair, flight, drink-now, scan-add, scan-pour, manual-add — all working from phone PWA.
 
-**What's in progress:** nothing actively blocked.
+**Recently shipped (v0.9.0, this session):**
+- Frontend bundled + minified via esbuild (`npm run build:docs` → [`docs/js/dist/app.bundle.js`](docs/js/dist/app.bundle.js), ~46 KB minified).
+- AbortController on view fetch — no more late-arriving HTML overwriting the current view.
+- Inline `onerror` removed from `index.html`; `config.local.js` is now loaded dynamically from JS (CSP-ready).
+- Watcher now passes a filtered env to the spawned `claude` (no more service-role key / SMTP password leakage).
+- Watcher rate-limit map has LRU eviction (10k cap) — closes the slow memory leak.
+- Watcher fails fast on realtime/chokidar/unhandled errors and shuts down gracefully on SIGINT/SIGTERM.
+- Scan-request image downloads now run in parallel.
+- New SQL migration [`0006_search_path_hardening.sql`](supabase/migrations/0006_search_path_hardening.sql) hardens `search_path` on the three security-definer functions.
+- esbuild dev dep pinned to `^0.25` so `npm audit` stays clean.
+
+**Owner action queued (see [`HANDOFF_QUEUE.md`](HANDOFF_QUEUE.md)):**
+- Apply migration 0006 in the Supabase SQL Editor.
+- Restart the watcher to pick up the v0.9.0 hardening.
 
 **What's broken / incomplete:**
-- `scripts/security-smoke-test.mjs` was scoped in the original P1-3 plan but never written. Manual verification has been used instead.
 - Watcher runs on the owner's primary device, not an always-on host. Sleep = no AI processing during the sleep window. Acceptable for personal use.
 
-**Immediate next action:** none assigned. Owner driving feature requests.
+**Immediate next action:** owner runs migration 0006 + restarts the watcher.
 
-**Which surface should act next:** owner (next feature request).
+**Which surface should act next:** owner.

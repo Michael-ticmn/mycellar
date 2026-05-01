@@ -19,13 +19,18 @@ const sb = createClient(CONFIG.supabaseUrl, CONFIG.supabaseServiceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+// Track resources for graceful shutdown.
+const channels = [];
+let responsesWatcher = null;
+let sweepTimer = null;
+
 await ensureDirs();
 await sweepStaleRequests(); // catch up on anything queued while we were down
 await sweepStaleClaims();   // recover any picked_up rows abandoned by a prior crash
 subscribePairingRequests();
 subscribeScanRequests();
 watchResponses();
-setInterval(sweepStaleClaims, 120_000);
+sweepTimer = setInterval(sweepStaleClaims, 120_000);
 
 log('cellar27-watcher running. Bridge dir:', CONFIG.bridgeDir);
 
@@ -53,7 +58,7 @@ async function sweepStaleRequests() {
 // ───────────────────────── inbound (Supabase → file) ─────────────────────────
 
 function subscribePairingRequests() {
-  sb.channel('pairing-requests')
+  const ch = sb.channel('pairing-requests')
     .on('postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'pairing_requests' },
       async ({ new: row }) => {
@@ -61,11 +66,12 @@ function subscribePairingRequests() {
         try { await pickUp('pairing_requests', row); }
         catch (e) { err('pairing pickUp:', e); await markError('pairing_requests', row.id, String(e?.message || e)); }
       })
-    .subscribe((status) => log('pairing-requests channel:', status));
+    .subscribe((status) => onChannelStatus('pairing-requests', status));
+  channels.push(ch);
 }
 
 function subscribeScanRequests() {
-  sb.channel('scan-requests')
+  const ch = sb.channel('scan-requests')
     .on('postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'scan_requests' },
       async ({ new: row }) => {
@@ -73,7 +79,18 @@ function subscribeScanRequests() {
         try { await pickUp('scan_requests', row); }
         catch (e) { err('scan pickUp:', e); await markError('scan_requests', row.id, String(e?.message || e)); }
       })
-    .subscribe((status) => log('scan-requests channel:', status));
+    .subscribe((status) => onChannelStatus('scan-requests', status));
+  channels.push(ch);
+}
+
+// Realtime status callback: log every state, fail-fast on terminal errors so
+// the supervisor restarts a clean process instead of silently going deaf.
+function onChannelStatus(name, status) {
+  log(`${name} channel:`, status);
+  if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+    err(`FATAL: realtime channel ${name} entered ${status}; exiting for supervisor restart`);
+    process.exit(1);
+  }
 }
 
 async function pickUp(table, row) {
@@ -130,10 +147,9 @@ async function pickUp(table, row) {
     const respondTo = join(CONFIG.dirs.responses, fileName);
 
     // Download all images (front, back, etc) to local paths the agent can read.
+    // Parallelize: a 2-image scan halves wall-clock latency vs sequential awaits.
     const paths = Array.isArray(claimed.image_paths) ? claimed.image_paths : [];
-    const images = [];
-    for (let i = 0; i < paths.length; i++) {
-      const storagePath = paths[i];
+    const images = await Promise.all(paths.map(async (storagePath, i) => {
       const ext = extname(storagePath) || '.jpg';
       // Convention: paths are uploaded as ".../scan-<uuid>-<label>.jpg".
       // Extract the label from the basename if present, else fall back to index.
@@ -141,8 +157,8 @@ async function pickUp(table, row) {
       const label = ['front', 'back', 'side', 'top'].includes(baseLabel) ? baseLabel : `image${i + 1}`;
       const localImage = join(CONFIG.dirs.images, `${claimed.id}-${label}${ext}`);
       await downloadImage(storagePath, localImage);
-      images.push({ label, path: localImage });
-    }
+      return { label, path: localImage };
+    }));
 
     // For 'enrich' intent, optionally fetch the bottle row to give the agent context.
     let existingBottle = null;
@@ -237,6 +253,11 @@ function watchResponses() {
       err(`ingest ${name}:`, e);
     }
   });
+  watcher.on('error', (e) => {
+    err(`FATAL: chokidar watcher error: ${e?.message || e}; exiting for supervisor restart`);
+    process.exit(1);
+  });
+  responsesWatcher = watcher;
 }
 
 async function ingestPairingResponse(path) {
@@ -338,6 +359,31 @@ async function markError(table, id, message) {
 
 // ───────────────────────── lifecycle ─────────────────────────
 
-process.on('SIGINT',  () => { log('SIGINT, exiting'); process.exit(0); });
-process.on('SIGTERM', () => { log('SIGTERM, exiting'); process.exit(0); });
-process.on('unhandledRejection', (reason) => err('unhandledRejection:', reason));
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log(`${signal}, shutting down`);
+  if (sweepTimer) clearInterval(sweepTimer);
+  for (const ch of channels) {
+    try { await ch.unsubscribe(); } catch (e) { err('unsubscribe:', e?.message || e); }
+  }
+  if (responsesWatcher) {
+    try { await responsesWatcher.close(); } catch (e) { err('chokidar close:', e?.message || e); }
+  }
+  log('shutdown complete');
+  process.exit(0);
+}
+process.on('SIGINT',  () => { shutdown('SIGINT').catch(()  => process.exit(1)); });
+process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)); });
+
+// Fail-fast on unhandled rejections: continuing in possibly-corrupted state
+// is worse than restarting under the supervisor.
+process.on('unhandledRejection', (reason) => {
+  err('FATAL unhandledRejection:', reason);
+  process.exit(1);
+});
+process.on('uncaughtException', (e) => {
+  err('FATAL uncaughtException:', e);
+  process.exit(1);
+});

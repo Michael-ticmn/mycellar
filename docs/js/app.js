@@ -25,12 +25,22 @@ function parseHash() {
   const [route, ...params] = h.split('/');
   return { route: ROUTES.includes(route) ? route : 'cellar', params };
 }
+// Cancel any in-flight view fetch when a new one starts so a slow load
+// can't overwrite the view the user has since navigated to.
+let _viewAbort = null;
 async function loadView(name) {
   // Aliases: edit → add (same form, different submit), scan → manage
   // (kept so old PWA shortcuts / bookmarks don't 404).
   const file = name === 'edit' ? 'add' : name === 'scan' ? 'manage' : name;
-  const res = await fetch(`views/${file}.html`);
-  return res.ok ? res.text() : `<p>View not found: ${name}</p>`;
+  if (_viewAbort) _viewAbort.abort();
+  _viewAbort = new AbortController();
+  try {
+    const res = await fetch(`views/${file}.html`, { signal: _viewAbort.signal });
+    return res.ok ? res.text() : `<p>View not found: ${name}</p>`;
+  } catch (e) {
+    if (e?.name === 'AbortError') return null;
+    throw e;
+  }
 }
 
 async function render(providedSession) {
@@ -45,7 +55,9 @@ async function render(providedSession) {
     a.classList.toggle('active', a.dataset.route === route);
   });
 
-  $('#main').innerHTML = await loadView(route);
+  const html = await loadView(route);
+  if (html === null) return; // superseded by a newer navigation
+  $('#main').innerHTML = html;
   await mountView(route, params);
 }
 
@@ -1330,6 +1342,20 @@ mountVoicePicker();
 window.addEventListener('hashchange', () => render());
 onAuthChange((session) => setTimeout(() => render(session), 0));
 wireAuth();
+
+// Optional local-dev config override. config.local.js is gitignored and
+// 404s in production — we load it via a script tag injected from JS so
+// the index.html stays free of inline event handlers (CSP-friendly).
+function loadOptionalLocalConfig() {
+  return new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = 'config.local.js';
+    s.onload = () => resolve();
+    s.onerror = () => resolve(); // 404 is the expected case in prod
+    document.head.appendChild(s);
+  });
+}
+await loadOptionalLocalConfig();
 render();
 
 if ('serviceWorker' in navigator) {
