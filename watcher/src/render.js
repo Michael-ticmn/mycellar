@@ -19,6 +19,15 @@ function nowContext() {
   return `${dayDate} — ${time}${tzName ? ` (${tzName})` : ''}`;
 }
 
+// Build the "## Today" body. Includes weather if the caller fetched any
+// (null when LOCATION_LAT/LON aren't configured or the API call failed —
+// graceful degradation, never blocks the recommendation).
+function todaySection(weather) {
+  const lines = [nowContext()];
+  if (weather) lines.push(`Weather: ${weather}`);
+  return lines.join('\n');
+}
+
 function bottleRow(b) {
   const bits = [
     b.id,
@@ -64,7 +73,7 @@ function taskFor(type, ctx = {}) {
   }
 }
 
-export function renderPairingRequest(row, respondToPath) {
+export function renderPairingRequest(row, respondToPath, weather = null) {
   const fm = `---
 request_id: ${row.id}
 type: ${row.request_type}
@@ -80,7 +89,7 @@ respond_to: ${respondToPath}
 # cellar27 request
 
 ## Today
-${nowContext()}
+${todaySection(weather)}
 
 ## Context
 \`\`\`json
@@ -116,7 +125,7 @@ completed: <ISO timestamp>
 
 // images: array of { label: 'front'|'back'|..., path: '<absolute local path>' }
 // existingBottle: only set for intent='enrich' (DB row, AI uses for context)
-export function renderScanRequest(row, images, respondToPath, existingBottle = null) {
+export function renderScanRequest(row, images, respondToPath, existingBottle = null, weather = null) {
   const fm = `---
 request_id: ${row.id}
 type: scan
@@ -158,7 +167,7 @@ respond_to: ${respondToPath}
 # cellar27 scan request
 
 ## Today
-${nowContext()}
+${todaySection(weather)}
 
 ${imagesSection}
 

@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import chokidar from 'chokidar';
 import { CONFIG } from './config.js';
 import { renderPairingRequest, renderScanRequest } from './render.js';
+import { getWeather } from './weather.js';
 import { parsePairingResponse, parseScanResponse } from './parse.js';
 import { invokeBridgeAgent } from './agent.js';
 import { denyReason } from './policy.js';
@@ -183,11 +184,15 @@ async function pickUp(table, row) {
     .select().single();
   if (claimErr || !claimed) { log(`already claimed: ${table}.${row.id}`); return; }
 
+  // Fetch current weather (cached 30 min, returns null on failure / not
+  // configured). Awaited up front so it can flow into either render path.
+  const weather = await getWeather();
+
   let reqPath;
   if (table === 'pairing_requests') {
     const fileName = `req-${claimed.id}.md`;
     const respondTo = join(CONFIG.dirs.responses, fileName);
-    const body = renderPairingRequest(claimed, respondTo);
+    const body = renderPairingRequest(claimed, respondTo, weather);
     reqPath = join(CONFIG.dirs.requests, fileName);
     await writeFile(reqPath, body, 'utf8');
     log(`wrote pairing request ${reqPath}`);
@@ -221,7 +226,7 @@ async function pickUp(table, row) {
       existingBottle = data;
     }
 
-    const body = renderScanRequest(claimed, images, respondTo, existingBottle);
+    const body = renderScanRequest(claimed, images, respondTo, existingBottle, weather);
     reqPath = join(CONFIG.dirs.requests, fileName);
     await writeFile(reqPath, body, 'utf8');
     log(`wrote scan request ${reqPath} (intent=${claimed.intent}, images=${images.length})`);
