@@ -1,6 +1,6 @@
 # cellar27 — CURRENT_STATE.md
 
-## As of 2026-04-30 (v0.9.1 — autoEnrich UX + innerHTML XSS audit)
+## As of 2026-04-30 (v0.9.5 — guest sharing)
 
 **What exists and works:**
 
@@ -20,6 +20,13 @@
   - Stale-claim sweep with 2-retry cap.
   - Email notification on limit hit (Gmail SMTP via App Password; cooldown-throttled).
 - End-to-end pair, flight, drink-now, scan-add, scan-pour, manual-add — all working from phone PWA.
+- **Guest sharing** (`#/share`): owner generates a short-lived, mobile-friendly link with a QR. Guests browse the cellar and run pair / flight / ask-sommelier without an account; price / notes / storage / label fields are stripped server-side. Per-link AI budget (independent of the owner's 100/hr quota), owner-picks-TTL at creation, one active link at a time, generating a new link revokes the prior. SECURITY DEFINER RPCs over an `anon` client; RLS on `bottles` and `pairing_requests` untouched.
+
+**Recently shipped (v0.9.5):**
+- New tables / RPCs: `share_links`, `cellar27_share_resolve`, `cellar27_share_list_bottles`, `cellar27_share_create_pairing_request`, `cellar27_share_get_response`, `cellar27_share_create`. `pairing_requests` gains a nullable `share_link_id` so guest-originated requests are auditable and can't be polled by other tokens.
+- New owner UI at [`docs/views/share.html`](docs/views/share.html) — TTL picker (2 / 6 / 24 / 72 h), AI quota input, generate / revoke. Vendored QR library at [`docs/vendor/qrcode.min.js`](docs/vendor/qrcode.min.js).
+- New anon UI at [`docs/views/guest.html`](docs/views/guest.html) — tabbed Cellar / Pair / Flight / Sommelier; bottle rows + pick cards open a sanitized-fields modal (anon clients can't hit RLS-scoped `/bottle/:id`). Banner reads "Shared cellar · N requests left".
+- Owner-side recommendation renderer reordered: narrative leads, picks follow. All bottle cards are clickable now (owner → detail page, guest → modal).
 
 **Recently shipped (v0.9.1):**
 - `autoEnrich()` no longer fails silently — failed enrichments surface as a `Retry sommelier notes` button on the bottle detail page (with the error in the title), plus a toast.
@@ -38,7 +45,7 @@
 - esbuild dev dep pinned to `^0.25` so `npm audit` stays clean.
 
 **Owner action queued (see [`HANDOFF_QUEUE.md`](HANDOFF_QUEUE.md)):**
-- Apply migrations 0006 + 0007 in the Supabase SQL Editor.
+- Apply migrations 0006 + 0007 in the Supabase SQL Editor (0008 / 0009 / 0010 are already applied).
 - Restart the watcher to pick up the v0.9.0 hardening.
 - Optional: drop two phone screenshots into `docs/screenshots/` and wire into the manifest for a richer install prompt.
 

@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-04-30 (evening) — v0.9.5: guest sharing (temporary read+AI link with QR)
+
+### Built
+
+A short-lived, mobile-first share link that lets a guest browse the owner's cellar and run pair / flight / ask-sommelier — without an account — over an anonymous Supabase client. Implements the pattern sketched in `ARCHITECTURE.md`'s "share_links" note and extends it to AI features with a per-link spawn cap.
+
+**Database** (three new migrations; applied in order)
+- `0008_share_links.sql` — `share_links` table (`owner_user_id`, `token`, `expires_at`, `ai_quota`, `ai_used`, `revoked_at`). RLS: owners can read/revoke their own rows; inserts go through `cellar27_share_create()` so the prior active link can be revoked atomically. Two SECURITY DEFINER RPCs granted to `anon`: `cellar27_share_resolve(token)` returns expiry / quota for an active token (no row if missing/revoked/expired); `cellar27_share_list_bottles(token)` returns the same field set as `snapshotForBridge` in `pairings.js` — `acquired_price`, `notes`, `storage_location`, label paths, and `user_id` are explicitly dropped.
+- `0009_share_links_ai.sql` — adds `share_link_id uuid` to `pairing_requests` (FK + index, nullable so existing rows are unaffected). Two more anon-callable RPCs: `cellar27_share_create_pairing_request(token, type, ctx)` atomically increments `ai_used` (raises `quota_exhausted` or `link_invalid` if the row didn't update), builds the sanitized snapshot in SQL, and inserts into `pairing_requests` with the owner's `user_id` so the watcher sees an identical row to an owner-originated request. `cellar27_share_get_response(token, request_id)` joins `pairing_requests` to `share_links` and only returns rows whose `share_link_id` matches the supplied token — prevents probing of owner-originated requests with a guest token.
+- `0010_share_create.sql` — `cellar27_share_create(p_ttl_hours, p_ai_quota)` for owners. Allowlist gate (same as creating real requests), TTL clamped 1–168 h, quota clamped 1–50. Generates the token from `extensions.gen_random_bytes(24)` (url-safe base64), revokes any prior active row for the caller, returns the new row.
+
+**Owner UI** (`docs/views/share.html` + `docs/js/share.js` + `mountShare` in `app.js`)
+- New `#/share` route + topbar icon (last in nav). Form: TTL dropdown (2 / 6 / 24 / 72 h), AI quota input (default 20). Active-link panel renders the full URL, a QR via vendored qrcodejs (`docs/vendor/qrcode.min.js`, ~20 KB, MIT), `ai_used / ai_quota` line with hours-left, copy button, revoke button. Revoke is a plain RLS update.
+
+**Guest UI** (`docs/views/guest.html` + `docs/js/guest.js` + `mountGuest` in `app.js`)
+- New `#/guest/<token>` route. Auth bypass: `render()` short-circuits before the session check; `body.guest-mode` hides the topbar nav and email pill via CSS. Tabs: Cellar / Pair / Flight / Sommelier. Cellar tab reuses the same filter chips + sort UI as the owner cellar; bottle rows and pick cards open a modal showing the sanitized fields (anon clients can't hit `/bottle/:id` — that route queries via RLS).
+- AI flow polls `cellar27_share_get_response` on a 2 s loop, 5 min cap (matches the owner-side `waitForResponse` shape — anon clients can't subscribe to RLS-protected tables via Realtime, so polling beats the alternative of broadening Realtime publication scope).
+- Banner reads "Shared cellar · N requests left" — quota refreshes after each successful submit.
+
+**Cross-cutting**
+- Recommendation renderers (owner + guest): narrative now leads, picks follow. All bottle cards/rows are clickable — owner → `/bottle/:id`, guest → modal.
+- `docs/sw.js` SHELL list adds `views/share.html`, `views/guest.html`, `vendor/qrcode.min.js` so the guest landing works offline-after-first-load.
+- `docs/version.js`: `0.9.1` → `0.9.5`. Bundle rebuilt.
+
+### Decisions
+- **Per-link AI cap, not "draws from owner quota"**: a leaked link should not be able to drain the owner's daily Claude allowance. Owner picks both TTL and quota at creation; both are clamped server-side.
+- **Revoke-on-create over multiple-active-links**: the simplest mental model. A small revoke button in the active-link panel covers the "share, then immediately regret it" case.
+- **No real `auth.users` row for guests**: avoids polluting the user table and the allowlist with throwaway accounts; sidesteps the lack of native TTL on Supabase auth users. The token-in-table + SECURITY DEFINER pattern is the same shape `ARCHITECTURE.md` already documented.
+- **Bypass owner allowlist + 100/hr rate limit on guest inserts**: enforced inside `cellar27_share_create_pairing_request`, which is the only path. Guests are intentionally on a separate budget. The watcher's global 250/day Claude ceiling still applies.
+- **Sanitized snapshot in SQL, not "trust the frontend"**: the `cellar_snapshot` jsonb the watcher will see is built inside the RPC, so a future client bug can't accidentally include `acquired_price`.
+- **Vendored qrcodejs, not a CDN**: the QR encodes a URL that includes a private token. A third-party CDN would have access to it on every render.
+
+### Followups (logged in `HANDOFF_QUEUE.md`)
+- None for v0.9.5 itself — owner has already applied 0008 / 0009 / 0010.
+- Migrations 0006 + 0007 (search-path hardening + claimed_by invariant) still pending from v0.9.0 / v0.9.1.
+
+### Next task
+Owner finishes the v0.9.0 / v0.9.1 migration apply (0006, 0007) and restarts the watcher.
+
+---
+
 ## 2026-04-30 (late PM) — v0.9.1: autoEnrich UX + innerHTML XSS audit
 
 ### Built
