@@ -1323,13 +1323,15 @@ function renderFoodEditor(food) {
   const items = Array.isArray(food) ? food : [];
   const rows = items.map((item, i) => `
     <li class="food-row" data-food-idx="${i}">
-      <select data-food-field="kind">
-        <option value="meal"  ${item.kind === 'meal'  ? 'selected' : ''}>Meal</option>
-        <option value="snack" ${item.kind === 'snack' ? 'selected' : ''}>Snack</option>
-      </select>
-      <input type="text" data-food-field="name" value="${escapeAttr(item.name || '')}" placeholder="Dish or snack" />
-      <input type="text" data-food-field="description" value="${escapeAttr(item.description || '')}" placeholder="Notes (optional)" />
-      <button type="button" class="ghost" data-food-remove>×</button>
+      <div class="food-row-head">
+        <select data-food-field="kind">
+          <option value="meal"  ${item.kind === 'meal'  ? 'selected' : ''}>Meal</option>
+          <option value="snack" ${item.kind === 'snack' ? 'selected' : ''}>Snack</option>
+        </select>
+        <input type="text" data-food-field="name" value="${escapeAttr(item.name || '')}" placeholder="Dish or snack" />
+        <button type="button" class="ghost" data-food-remove aria-label="Remove">×</button>
+      </div>
+      <textarea data-food-field="description" rows="3" placeholder="Notes (optional)">${escapeHtml(item.description || '')}</textarea>
     </li>`).join('');
   return `<ul class="food-list">${rows || '<li class="muted">No food yet. Add one below.</li>'}</ul>
     <div class="row food-add-row">
@@ -1346,17 +1348,24 @@ function renderPrepEditor(prep, bottles) {
   const rows = bottles.map(({ pick, bottle }) => {
     const id = pick.bottle_id;
     const name = bottle ? `${bottle.producer}${bottle.wine_name ? ' · ' + bottle.wine_name : ''}` : 'Unknown bottle';
+    const decant = decantOf(id);
+    const decantBadge = decant
+      ? `<div class="prep-decant-badge">Decant${decant.why ? ` — ${escapeHtml(decant.why)}` : ''}</div>`
+      : '';
     return `<tr data-prep-bottle="${escapeAttr(id)}">
-      <th scope="row">${escapeHtml(name)}</th>
-      <td data-prep-label="Chill"><input type="number" min="0" max="600" step="5" data-prep-field="chill"   value="${escapeAttr(chillBy(id).minutes ?? '')}"  placeholder="min" /></td>
-      <td data-prep-label="Open by"><input type="number" min="0" max="600" step="5" data-prep-field="open_by" value="${escapeAttr(openByOf(id).minutes ?? '')}" placeholder="min" /></td>
-      <td data-prep-label="Decant"><label class="prep-decant"><input type="checkbox" data-prep-field="decant" ${decantOf(id) ? 'checked' : ''} /> Decant</label></td>
+      <th scope="row">
+        <div class="prep-bottle-name">${escapeHtml(name)}</div>
+        ${decantBadge}
+      </th>
+      <td data-prep-label="Chill in fridge (minutes before pour)"><input type="number" min="0" max="600" step="5" data-prep-field="chill"   value="${escapeAttr(chillBy(id).minutes ?? '')}"  placeholder="min" /></td>
+      <td data-prep-label="Breathe — pull cork (minutes before pour)"><input type="number" min="0" max="600" step="5" data-prep-field="open_by" value="${escapeAttr(openByOf(id).minutes ?? '')}" placeholder="min" /></td>
       <td data-prep-label="Glass"><input type="text" data-prep-field="glassware" value="${escapeAttr(glassOf(id).type || '')}" placeholder="e.g. Burgundy" /></td>
     </tr>`;
   }).join('');
-  return `<table class="prep-table">
-    <thead><tr><th></th><th>Chill</th><th>Open by</th><th></th><th>Glass</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="5" class="muted">No bottles to prep.</td></tr>'}</tbody>
+  return `<p class="muted prep-hint">Sommelier suggestions — adjust the minutes if you'd rather pour differently. <em>Chill</em> = how long in the fridge before serving. <em>Breathe</em> = how long ahead to pull the cork so the wine can aerate (a heavier intervention than this is in the Decant note under the bottle).</p>
+  <table class="prep-table">
+    <thead><tr><th></th><th>Chill (min)</th><th>Breathe (min)</th><th>Glass</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="4" class="muted">No bottles to prep.</td></tr>'}</tbody>
   </table>
   <label class="prep-notes-label">Other notes
     <textarea data-prep-field="notes" rows="6" placeholder="Anything else…">${escapeHtml(prep.notes || '')}</textarea>
@@ -1424,22 +1433,23 @@ function wirePlannedDetail(root, plan) {
     });
   });
 
-  // Prep — same recompute-and-patch pattern
+  // Prep — same recompute-and-patch pattern. Decanters are not editable
+  // in the UI (they're sommelier advice, not a user toggle), so we just
+  // pass through whatever was in the loaded plan.
+  const originalDecanters = Array.isArray(plan.prep?.decanters) ? plan.prep.decanters : [];
   const collectPrep = () => {
-    const chill = [], open_by = [], decanters = [], glassware = [];
+    const chill = [], open_by = [], glassware = [];
     $$('[data-prep-bottle]', root).forEach((tr) => {
       const bottleId = tr.dataset.prepBottle;
       const chillVal   = numOrNull(tr.querySelector('[data-prep-field="chill"]')?.value);
       const openByVal  = numOrNull(tr.querySelector('[data-prep-field="open_by"]')?.value);
-      const decantVal  = tr.querySelector('[data-prep-field="decant"]')?.checked;
       const glassVal   = tr.querySelector('[data-prep-field="glassware"]')?.value.trim();
       if (chillVal != null)  chill.push({ bottle_id: bottleId, minutes: chillVal });
       if (openByVal != null) open_by.push({ bottle_id: bottleId, minutes: openByVal });
-      if (decantVal)         decanters.push({ bottle_id: bottleId });
       if (glassVal)          glassware.push({ bottle_id: bottleId, type: glassVal });
     });
     const notes = $('[data-prep-field="notes"]', root)?.value.trim() || null;
-    return { chill, open_by, decanters, glassware, notes };
+    return { chill, open_by, decanters: originalDecanters, glassware, notes };
   };
   const persistPrep = async () => {
     try { await updatePlannedFlight(id, { prep: collectPrep() }); showErr(''); }

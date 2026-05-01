@@ -851,24 +851,42 @@ body.guest-mode .topbar .userbox { display: none; }
   padding: 0;
   margin: 0 0 0.75rem;
   display: grid;
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
 .food-row {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.75rem;
   display: grid;
-  grid-template-columns: 6rem minmax(8rem, 1fr) minmax(10rem, 2fr) auto;
+  gap: 0.5rem;
+}
+.food-row-head {
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
   align-items: center;
 }
-.food-row [data-food-remove] {
+.food-row-head select { flex: 0 0 auto; width: auto; }
+.food-row-head input[type="text"] { flex: 1 1 8rem; min-width: 0; }
+.food-row-head [data-food-remove] {
+  flex: 0 0 auto;
   padding: 0.25rem 0.6rem;
   font-size: 1rem;
   line-height: 1;
+  margin-left: auto;
+}
+.food-row textarea {
+  width: 100%;
+  font: inherit;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 0.5rem;
+  resize: vertical;
 }
 .food-add-row { gap: 0.5rem; }
-@media (max-width: 640px) {
-  .food-row { grid-template-columns: 5rem 1fr auto; }
-  .food-row [data-food-field="description"] { grid-column: 1 / -1; }
-}
 
 .planned-prep .prep-table {
   width: 100%;
@@ -891,13 +909,18 @@ body.guest-mode .topbar .userbox { display: none; }
 }
 .prep-table input[type="number"] { width: 100%; max-width: 5rem; }
 .prep-table input[type="text"]   { width: 100%; min-width: 0; }
-.prep-decant {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.85rem;
-  white-space: nowrap;
+.prep-bottle-name { font-weight: 500; }
+.prep-decant-badge {
+  display: inline-block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--highlight);
+  background: var(--surface-2);
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
 }
+.prep-hint { font-size: 0.85rem; margin: 0 0 0.6rem; }
 
 /* On narrow screens the 5-column table forces horizontal scroll. Stack
    each row into a card with cells acting as labelled fields. The header
@@ -931,6 +954,7 @@ body.guest-mode .topbar .userbox { display: none; }
   }
   .prep-table td[data-prep-label="Glass"] { grid-column: 1 / -1; }
   .prep-table input[type="number"] { max-width: none; }
+  .prep-decant-badge { display: block; max-width: max-content; }
 }
 .prep-notes-label {
   display: grid;
