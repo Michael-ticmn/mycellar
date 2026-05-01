@@ -1,0 +1,32 @@
+<section class="share-view">
+  <h1>Share my cellar</h1>
+  <p class="muted">Generate a temporary, mobile-friendly link. Guests can browse this cellar, run pair / flight / sommelier — but can't see prices or modify anything. Generating a new link revokes any previous one.</p>
+
+  <form id="share-create-form" class="share-form">
+    <label>How long should it last?
+      <select name="ttl_hours">
+        <option value="2">2 hours</option>
+        <option value="6" selected>6 hours</option>
+        <option value="24">24 hours</option>
+        <option value="72">3 days</option>
+      </select>
+    </label>
+    <label>AI request budget
+      <input name="ai_quota" type="number" min="1" max="50" value="20" />
+      <span class="muted">Shared across everyone using the link.</span>
+    </label>
+    <button type="submit" id="share-create-btn">Generate share link</button>
+    <p id="share-create-error" class="error"></p>
+  </form>
+
+  <section id="share-active" class="share-active" hidden>
+    <h2>Active link</h2>
+    <div id="share-qr" class="share-qr"></div>
+    <div class="share-url-row">
+      <input id="share-url" type="text" readonly />
+      <button type="button" id="share-copy">Copy</button>
+    </div>
+    <p class="muted" id="share-meta"></p>
+    <button type="button" id="share-revoke" class="ghost">Revoke now</button>
+  </section>
+</section>

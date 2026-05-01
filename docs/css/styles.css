@@ -754,3 +754,36 @@ input:focus, select:focus, textarea:focus {
 .voice-rate-row input[type="range"] { width: 100%; }
 .voice-picker-actions { justify-content: flex-end; }
 .voice-picker-actions button { padding: 0.35rem 0.8rem; font-size: 0.85rem; }
+
+/* Guest share view: hide owner-only chrome */
+body.guest-mode .topbar nav,
+body.guest-mode .topbar .userbox { display: none; }
+
+/* Guest share view: tab strip */
+.guest-tabs { display: flex; gap: 0.25rem; margin: 0.75rem 0 1rem; border-bottom: 1px solid var(--surface-2); }
+.guest-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 0.55rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+.guest-tab.active { color: var(--text); border-bottom-color: currentColor; }
+
+/* Share view (owner-side) */
+.share-form { display: flex; flex-direction: column; gap: 1rem; max-width: 28rem; }
+.share-active { margin-top: 2rem; }
+.share-qr { display: flex; justify-content: center; padding: 1rem; background: #fff; border-radius: 8px; max-width: 260px; }
+.share-qr canvas, .share-qr img { display: block; }
+.share-url-row { display: flex; gap: 0.5rem; margin: 1rem 0 0.5rem; }
+.share-url-row input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+
+/* Guest bottle-detail modal */
+.guest-modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+.guest-modal[hidden] { display: none; }
+.guest-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); }
+.guest-modal-card { position: relative; max-width: 28rem; width: 100%; max-height: 85vh; overflow: auto; background: var(--surface-1); border: 1px solid var(--surface-2); border-radius: 12px; padding: 1.25rem 1.25rem 1.5rem; }
+.guest-modal-close { position: absolute; top: 0.5rem; right: 0.5rem; background: transparent; border: 0; color: var(--muted); font-size: 1.1rem; cursor: pointer; padding: 0.4rem 0.6rem; }
+.bottle-row, .bottle-card { cursor: pointer; }
