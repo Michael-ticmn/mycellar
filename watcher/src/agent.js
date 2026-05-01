@@ -6,6 +6,8 @@
 // cost (a couple of seconds) — acceptable since reasoning takes 10–30s.
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join, isAbsolute } from 'node:path';
 import { CONFIG } from './config.js';
 
 const ts = () => new Date().toISOString();
@@ -34,6 +36,33 @@ function filteredEnv() {
   return out;
 }
 
+// Resolve CONFIG.claudeBin to an absolute path. On Windows, npm-installed
+// CLIs are .cmd shims (e.g. claude.cmd); spawning by bare name without
+// shell:true fails. We previously worked around this by passing
+// shell:true, but Node's DEP0190 deprecates that combo (shell-injection
+// risk on the concatenated arg string). Resolve the .cmd path explicitly
+// once, then spawn it directly with shell:false. No string concat = no
+// deprecation, no escaping concerns.
+let _resolvedBin = null;
+function resolveBin() {
+  if (_resolvedBin) return _resolvedBin;
+  const bin = CONFIG.claudeBin;
+  if (isAbsolute(bin) && existsSync(bin)) return (_resolvedBin = bin);
+  const isWin = process.platform === 'win32';
+  const exts = isWin ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';') : [''];
+  const sep  = isWin ? ';' : ':';
+  for (const dir of (process.env.PATH || '').split(sep)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const candidate = join(dir, bin + ext);
+      if (existsSync(candidate)) return (_resolvedBin = candidate);
+    }
+  }
+  // Fall back to the bare name; spawn will surface ENOENT if it can't
+  // find it. This keeps the failure mode visible rather than silent.
+  return (_resolvedBin = bin);
+}
+
 export function invokeBridgeAgent(requestFilePath) {
   if (!CONFIG.autoInvoke) {
     log(`auto-invoke disabled; leaving ${requestFilePath} for manual bridge agent`);
@@ -54,10 +83,10 @@ Read that file. It contains frontmatter (with a respond_to path you must write t
     '--no-session-persistence',
   ];
 
-  log(`spawning ${CONFIG.claudeBin} for ${requestFilePath}`);
-  const proc = spawn(CONFIG.claudeBin, args, {
+  const bin = resolveBin();
+  log(`spawning ${bin} for ${requestFilePath}`);
+  const proc = spawn(bin, args, {
     cwd: CONFIG.bridgeDir,
-    shell: process.platform === 'win32', // resolve .cmd shim on Windows
     stdio: ['pipe', 'pipe', 'pipe'],
     env: filteredEnv(),
   });

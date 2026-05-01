@@ -4,6 +4,38 @@
 
 ---
 
+## 2026-05-01 (morning) — watcher: realtime reconnect + DEP0190 fix
+
+### Built
+
+A real morning request stuck in `pending`, never picked up. Root cause: at `2026-05-01T11:23:23Z` the Supabase realtime channel transitioned to `CHANNEL_ERROR` (transient network hiccup); the v0.9.0 fail-fast logic correctly exited the process expecting a supervisor restart. **But there is no supervisor** — the watcher runs as a detached `node.exe` (no PM2, no service, no scheduled task; see `watcher_runtime` memory). Fail-fast = silent death until manual restart.
+
+**Watcher: reconnect in-process** ([`watcher/src/index.js`](watcher/src/index.js))
+- Replaced `process.exit(1)` on `CHANNEL_ERROR` / `TIMED_OUT` / `CLOSED` with exponential-backoff reconnect: 2s → 4s → 8s → 16s → 32s → cap 60s. Per-channel state in a `Map`, debounced so repeated status callbacks during a flap don't stack timers.
+- On successful re-`SUBSCRIBED`, sweep that channel's table for `status='pending'` rows. Realtime doesn't replay INSERTs that fired during the dead window, so without this any request landing during the gap stays pending forever (which is exactly what happened today).
+- Refactored: extracted `subscribeChannel(name)` so initial subscribe and reconnect share the same code path. Channel handle stored in a `Map` keyed by name; the prior handle is unsubscribed before replacement so realtime doesn't end up with two subs and duplicate INSERT events.
+- Shutdown handler clears any pending reconnect timers before unsubscribing so SIGINT/SIGTERM stays clean.
+- `uncaughtException` / `unhandledRejection` keep their fail-fast behavior — those reflect bugs in the process, not transient network issues, and continuing in a corrupted state is worse than restarting.
+
+**Watcher: DEP0190 fix** ([`watcher/src/agent.js`](watcher/src/agent.js))
+- Was: `spawn(claudeBin, args, { shell: process.platform === 'win32', ... })`. Needed `shell:true` so cmd.exe could resolve `claude.cmd` (npm CLI shim on Windows).
+- Now: explicit PATH-based binary resolution honoring `PATHEXT`, then `spawn(resolvedPath, args, { shell: false })`. Cached after first call. No string concatenation, no DEP0190 warning, no shell-injection surface.
+
+### Decisions
+- **Reconnect in-process over "add a supervisor"**: matches the user's explicit choice in `watcher_runtime` memory. PM2 was rejected; we work with the runtime model that exists.
+- **Per-table sweep on reconnect, not full sweep**: a channel can flap independently — we shouldn't pay an O(N) sweep across every table because pairing-requests had a hiccup.
+- **Backoff cap at 60s**: Supabase outages are usually seconds-long; a 60s cap means we recover within a minute of service restoration even after several failed attempts. Don't go longer — stale `pending` requests on the phone show as spinners until processed.
+- **Keep fail-fast on uncaught*/unhandledRejection*** : those are bug signatures, not network signatures. Different failure mode, different right answer.
+- **Resolve `.cmd` once and cache**: spawn is the hot path; PATH search shouldn't happen per-request.
+
+### Validation
+- Watcher restarted cleanly after the edits; both channels `SUBSCRIBED` on first try; no DEP0190 in stderr; today's stuck request was picked up by the startup sweep before the restart and completed in ~50s.
+
+### No version bump
+- These are watcher-only changes (no frontend, no SQL). PWA `version.js` stays at 0.9.6. Watcher has no semver of its own.
+
+---
+
 ## 2026-04-30 (late evening) — v0.9.6: guest-sharing hardening
 
 ### Built

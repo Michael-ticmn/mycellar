@@ -19,10 +19,22 @@ const sb = createClient(CONFIG.supabaseUrl, CONFIG.supabaseServiceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-// Track resources for graceful shutdown.
-const channels = [];
+// Track resources for graceful shutdown + per-channel reconnect state.
+// channels: name → most recent channel handle (replaced on reconnect).
+// reconnect: name → { attempts, timer } so we can back off and cancel cleanly.
+const channels = new Map();
+const reconnect = new Map();
 let responsesWatcher = null;
 let sweepTimer = null;
+
+// Channel definitions — name → table. Used by both initial subscribe and
+// reconnect, so we don't drift if the row-handler shape ever needs to
+// change. Declared before top-level await so subscribeChannel() (called
+// indirectly from line below) can read it without TDZ errors.
+const CHANNEL_DEFS = {
+  'pairing-requests': 'pairing_requests',
+  'scan-requests':    'scan_requests',
+};
 
 await ensureDirs();
 await sweepStaleRequests(); // catch up on anything queued while we were down
@@ -42,55 +54,92 @@ async function ensureDirs() {
   }
 }
 
-// On startup, pull anything stuck in 'pending' that we missed.
+// On startup (and on realtime reconnect), pull anything stuck in 'pending'
+// that we missed. Realtime doesn't replay missed INSERTs, so any row that
+// landed during a connection gap stays pending forever without this.
+async function sweepTable(table) {
+  const { data, error } = await sb.from(table).select('*').eq('status', 'pending');
+  if (error) { err(`sweep ${table}:`, error); return; }
+  for (const row of data || []) {
+    log(`sweep: picking up stale ${table}.${row.id}`);
+    try { await pickUp(table, row); }
+    catch (e) { err(`sweep pickUp ${row.id}:`, e); }
+  }
+}
 async function sweepStaleRequests() {
   for (const table of ['pairing_requests', 'scan_requests']) {
-    const { data, error } = await sb.from(table).select('*').eq('status', 'pending');
-    if (error) { err(`sweep ${table}:`, error); continue; }
-    for (const row of data || []) {
-      log(`sweep: picking up stale ${table}.${row.id}`);
-      try { await pickUp(table, row); }
-      catch (e) { err(`sweep pickUp ${row.id}:`, e); }
-    }
+    await sweepTable(table);
   }
 }
 
 // ───────────────────────── inbound (Supabase → file) ─────────────────────────
 
-function subscribePairingRequests() {
-  const ch = sb.channel('pairing-requests')
+function subscribeChannel(name) {
+  const table = CHANNEL_DEFS[name];
+  // Drop any previous channel with the same name before replacing the ref —
+  // realtime tracks subs by name; leaving the old one connected wastes a slot
+  // and produces duplicate INSERT events during the brief overlap.
+  const prior = channels.get(name);
+  if (prior) {
+    try { prior.unsubscribe(); } catch { /* best-effort */ }
+  }
+  const ch = sb.channel(name)
     .on('postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'pairing_requests' },
+      { event: 'INSERT', schema: 'public', table },
       async ({ new: row }) => {
         if (row.status !== 'pending') return;
-        try { await pickUp('pairing_requests', row); }
-        catch (e) { err('pairing pickUp:', e); await markError('pairing_requests', row.id, String(e?.message || e)); }
+        try { await pickUp(table, row); }
+        catch (e) { err(`${name} pickUp:`, e); await markError(table, row.id, String(e?.message || e)); }
       })
-    .subscribe((status) => onChannelStatus('pairing-requests', status));
-  channels.push(ch);
+    .subscribe((status) => onChannelStatus(name, status));
+  channels.set(name, ch);
 }
 
-function subscribeScanRequests() {
-  const ch = sb.channel('scan-requests')
-    .on('postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'scan_requests' },
-      async ({ new: row }) => {
-        if (row.status !== 'pending') return;
-        try { await pickUp('scan_requests', row); }
-        catch (e) { err('scan pickUp:', e); await markError('scan_requests', row.id, String(e?.message || e)); }
-      })
-    .subscribe((status) => onChannelStatus('scan-requests', status));
-  channels.push(ch);
-}
+function subscribePairingRequests() { subscribeChannel('pairing-requests'); }
+function subscribeScanRequests()    { subscribeChannel('scan-requests'); }
 
-// Realtime status callback: log every state, fail-fast on terminal errors so
-// the supervisor restarts a clean process instead of silently going deaf.
+// Realtime status handler. On terminal errors we don't kill the process —
+// the watcher runs as a detached node.exe with no supervisor, so exit
+// would mean silent death until the next manual restart. Reconnect in
+// place with exponential backoff instead, and on successful re-subscribe
+// run a stale-pending sweep so we catch any INSERTs that fired during
+// the dead window (realtime doesn't replay missed events).
 function onChannelStatus(name, status) {
   log(`${name} channel:`, status);
-  if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-    err(`FATAL: realtime channel ${name} entered ${status}; exiting for supervisor restart`);
-    process.exit(1);
+  if (status === 'SUBSCRIBED') {
+    const state = reconnect.get(name);
+    if (state) {
+      log(`${name} reconnected after ${state.attempts} attempt(s); sweeping stale pending`);
+      reconnect.delete(name);
+      // Catch up on anything inserted while the channel was down. We sweep
+      // only this channel's table, not all of them, so a flapping channel
+      // doesn't cause O(N) sweeps elsewhere.
+      sweepTable(CHANNEL_DEFS[name]).catch((e) => err(`reconnect sweep ${name}:`, e));
+    }
+    return;
   }
+  if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+    scheduleReconnect(name);
+  }
+}
+
+function scheduleReconnect(name) {
+  const state = reconnect.get(name) || { attempts: 0, timer: null };
+  if (state.timer) return; // already scheduled — debounce repeated status callbacks
+  state.attempts += 1;
+  // 2, 4, 8, 16, 32, 60, 60, … (capped at 60s)
+  const delay = Math.min(2_000 * 2 ** (state.attempts - 1), 60_000);
+  err(`${name} dropped; reconnect attempt ${state.attempts} in ${delay / 1000}s`);
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    reconnect.set(name, state);
+    try { subscribeChannel(name); }
+    catch (e) {
+      err(`${name} resubscribe threw:`, e);
+      scheduleReconnect(name);
+    }
+  }, delay);
+  reconnect.set(name, state);
 }
 
 async function pickUp(table, row) {
@@ -365,9 +414,14 @@ async function shutdown(signal) {
   shuttingDown = true;
   log(`${signal}, shutting down`);
   if (sweepTimer) clearInterval(sweepTimer);
-  for (const ch of channels) {
+  for (const state of reconnect.values()) {
+    if (state.timer) clearTimeout(state.timer);
+  }
+  reconnect.clear();
+  for (const ch of channels.values()) {
     try { await ch.unsubscribe(); } catch (e) { err('unsubscribe:', e?.message || e); }
   }
+  channels.clear();
   if (responsesWatcher) {
     try { await responsesWatcher.close(); } catch (e) { err('chokidar close:', e?.message || e); }
   }
