@@ -1367,9 +1367,8 @@ function renderPrepEditor(prep, bottles) {
     <thead><tr><th></th><th>Chill (min)</th><th>Breathe (min)</th><th>Glass</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="4" class="muted">No bottles to prep.</td></tr>'}</tbody>
   </table>
-  <label class="prep-notes-label">Other notes
-    <textarea data-prep-field="notes" rows="6" placeholder="Anything else…">${escapeHtml(prep.notes || '')}</textarea>
-  </label>`;
+  <h3 class="prep-notes-heading">Other notes</h3>
+  <div class="prep-notes-body" contenteditable="true" data-prep-field="notes" data-placeholder="Anything else — order of pours, palate cleansers, when to serve the snack, …">${escapeHtml(prep.notes || '')}</div>`;
 }
 
 function wirePlannedDetail(root, plan) {
@@ -1448,7 +1447,9 @@ function wirePlannedDetail(root, plan) {
       if (openByVal != null) open_by.push({ bottle_id: bottleId, minutes: openByVal });
       if (glassVal)          glassware.push({ bottle_id: bottleId, type: glassVal });
     });
-    const notes = $('[data-prep-field="notes"]', root)?.value.trim() || null;
+    const notesEl = $('[data-prep-field="notes"]', root);
+    const notesRaw = notesEl?.value ?? notesEl?.textContent ?? '';
+    const notes = notesRaw.trim() || null;
     return { chill, open_by, decanters: originalDecanters, glassware, notes };
   };
   const persistPrep = async () => {
@@ -1456,7 +1457,9 @@ function wirePlannedDetail(root, plan) {
     catch (e) { showErr(e.message); }
   };
   $$('[data-prep-field]', root).forEach((el) => {
-    el.addEventListener('change', persistPrep);
+    // contenteditable elements don't fire 'change' — listen on 'blur' instead.
+    const evt = el.isContentEditable ? 'blur' : 'change';
+    el.addEventListener(evt, persistPrep);
   });
 
   // Re-ask

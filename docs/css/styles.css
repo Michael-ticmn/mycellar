@@ -956,13 +956,29 @@ body.guest-mode .topbar .userbox { display: none; }
   .prep-table input[type="number"] { max-width: none; }
   .prep-decant-badge { display: block; max-width: max-content; }
 }
-.prep-notes-label {
-  display: grid;
-  gap: 0.25rem;
+.prep-notes-heading {
+  margin: 1.25rem 0 0.5rem;
+  color: var(--highlight);
+  font-size: 1.05rem;
+}
+.prep-notes-body {
+  min-height: 4rem;
+  padding: 0.25rem 0;
+  font: inherit;
+  white-space: pre-wrap;
+  outline: none;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  cursor: text;
+}
+.prep-notes-body:focus { border-bottom-color: var(--accent-2); }
+.prep-notes-body:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  font-style: italic;
 }
 
-.planned-notes textarea,
-.prep-notes-label textarea {
+.planned-notes textarea {
   width: 100%;
   font: inherit;
   background: var(--surface);
