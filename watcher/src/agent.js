@@ -85,8 +85,20 @@ Read that file. It contains frontmatter (with a respond_to path you must write t
 
   const bin = resolveBin();
   log(`spawning ${bin} for ${requestFilePath}`);
+  // Why shell:true on Windows despite DEP0190:
+  //   Node 24 refuses to spawn .cmd / .bat files directly (CVE-2024-27980
+  //   hardening) — without shell:true the call fails with EINVAL. npm
+  //   installs the `claude` CLI as a .cmd shim on Windows, so we have to
+  //   route through cmd.exe.
+  //   DEP0190 warns because shell:true with args concatenates them into
+  //   the shell command line without escaping, which is a shell-injection
+  //   risk *if any arg comes from user input*. In our case `args` is the
+  //   four hard-coded strings below (no dynamic content reaches it ever),
+  //   so the deprecation's reasoning doesn't apply. The warning is noise
+  //   for our usage pattern.
   const proc = spawn(bin, args, {
     cwd: CONFIG.bridgeDir,
+    shell: process.platform === 'win32',
     stdio: ['pipe', 'pipe', 'pipe'],
     env: filteredEnv(),
   });
