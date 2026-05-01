@@ -2,6 +2,23 @@
 
 const ISO = (d) => new Date(d).toISOString();
 
+// "Friday, May 1, 2026 — 11:14 AM CDT (America/Chicago)"
+// Spelled out so Claude can reason about day-of-week without parsing ISO.
+// The watcher runs on the owner's machine so Date / Intl reflect the
+// local timezone the user actually lives in.
+function nowContext() {
+  const d = new Date();
+  const dayDate = d.toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+  });
+  const time = d.toLocaleTimeString('en-US', {
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  });
+  let tzName = '';
+  try { tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { /* ignore */ }
+  return `${dayDate} — ${time}${tzName ? ` (${tzName})` : ''}`;
+}
+
 function bottleRow(b) {
   const bits = [
     b.id,
@@ -61,6 +78,9 @@ respond_to: ${respondToPath}
   return `${fm}
 
 # cellar27 request
+
+## Today
+${nowContext()}
 
 ## Context
 \`\`\`json
@@ -136,6 +156,9 @@ respond_to: ${respondToPath}
   return `${fm}
 
 # cellar27 scan request
+
+## Today
+${nowContext()}
 
 ${imagesSection}
 
