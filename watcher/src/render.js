@@ -57,11 +57,16 @@ function expectedCount(type) {
   return type === 'pairing' ? '1-2' : type === 'flight' ? '3-5' : '1-3';
 }
 
-// Shared instruction appended to every task. Stops the model from using
-// day-name colloquialisms ("a Tuesday", "Tuesday-feeling Friday", "save it
-// for a Saturday") that look like it ignored the actual date in ## Today.
-// Bit me twice in user testing.
-const NO_DAYNAME_COLLOQUIALISM = `\n\nWhen describing today, only ever use the actual day from the ## Today section above. Don't use day-name colloquialisms — never write "a Tuesday", "save it for a Friday", "a Tuesday-feeling Friday", or anything similar. If you mean "ordinary weeknight" say "weeknight"; if you mean "special occasion" say "special occasion." Same rule for season and weather: only describe what the ## Today section actually says, never invent.`;
+// Shared instruction appended to every task. The model has a habit of
+// inventing atmosphere about the user's evening — "warm spring Friday",
+// "Tuesday-feeling Friday", "save it for a special occasion" — based on
+// no actual signal. That invented mood then drives the framing of the
+// recommendation, which is wrong: the user only gave us the data in
+// ## Today and ## Context. Don't editorialize beyond it.
+const NO_INVENTED_CONTEXT = `\n\nIMPORTANT — narrative discipline:
+- Only describe today using the actual day, date, and weather from the ## Today section above. Don't use day-name colloquialisms (no "a Tuesday", "Tuesday-feeling Friday", "save it for a Saturday", etc.). If you mean "weeknight" say "weeknight"; if you mean "special occasion" say "special occasion."
+- Don't invent the user's mood, vibe, or occasion. If the ## Context section doesn't say it's casual / special / a date / low-key / celebratory, don't project any of those onto their evening. Recommend the wine for the dish and the data given, not for an atmosphere you imagined.
+- Don't invent weather, season, or location specifics beyond what ## Today literally states.`;
 
 function taskFor(type, ctx = {}) {
   let body;
@@ -90,7 +95,7 @@ Keep the buy suggestion to 2–3 sentences max plus the price range. Don't pad. 
     default:
       return `Unrecognized request_type: ${type}.`;
   }
-  return body + NO_DAYNAME_COLLOQUIALISM;
+  return body + NO_INVENTED_CONTEXT;
 }
 
 export function renderPairingRequest(row, respondToPath, weather = null) {
