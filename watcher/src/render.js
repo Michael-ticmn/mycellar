@@ -57,10 +57,17 @@ function expectedCount(type) {
   return type === 'pairing' ? '1-2' : type === 'flight' ? '3-5' : '1-3';
 }
 
+// Shared instruction appended to every task. Stops the model from using
+// day-name colloquialisms ("a Tuesday", "Tuesday-feeling Friday", "save it
+// for a Saturday") that look like it ignored the actual date in ## Today.
+// Bit me twice in user testing.
+const NO_DAYNAME_COLLOQUIALISM = `\n\nWhen describing today, only ever use the actual day from the ## Today section above. Don't use day-name colloquialisms — never write "a Tuesday", "save it for a Friday", "a Tuesday-feeling Friday", or anything similar. If you mean "ordinary weeknight" say "weeknight"; if you mean "special occasion" say "special occasion." Same rule for season and weather: only describe what the ## Today section actually says, never invent.`;
+
 function taskFor(type, ctx = {}) {
+  let body;
   switch (type) {
     case 'pairing':
-      return `Pick 1–2 bottles from the cellar that pair best with the dish/context above. Consider sweetness, acidity, weight, and tannin in relation to the food. Prefer bottles in or entering their drink window. Avoid past-peak unless the user asked specifically. If quantity is 1, weigh whether opening it now is worth it.
+      body = `Pick 1–2 bottles from the cellar that pair best with the dish/context above. Consider sweetness, acidity, weight, and tannin in relation to the food. Prefer bottles in or entering their drink window. Avoid past-peak unless the user asked specifically. If quantity is 1, weigh whether opening it now is worth it.
 
 ALSO always end the Narrative with a short "buy suggestion" section recommending exactly 1 specific wine (producer + wine name + vintage range, NOT from the cellar above) that would pair well with this dish, with an approximate retail price range. Frame it three ways depending on how strong your in-cellar pick was:
 
@@ -69,16 +76,21 @@ ALSO always end the Narrative with a short "buy suggestion" section recommending
   - Cellar pick is **low confidence**, OR your best pick required a real stretch → "### Better option" and frame it as "the wine that would actually nail this dish, if you're shopping" — make it clear the cellar pick is a compromise.
 
 Keep the buy suggestion to 2–3 sentences max plus the price range. Don't pad. The buy suggestion does NOT go in the Recommendations array — only the in-cellar picks do.`;
+      break;
     case 'flight':
       if (ctx.kind === 'extras') {
-        return `Suggest 1–2 specific wines (producer + wine name + vintage range, NOT from the user's cellar above) that would meaningfully round out their flight-building potential. ${ctx.theme_hint ? `Constraint or theme they're aiming for: ${ctx.theme_hint}.` : 'Look at gaps in their current cellar — varietals, regions, vintages, styles missing.'} For each suggestion include: producer + wine + vintage range, what flight it would unlock (with which existing bottles), why it fills a gap, and an approximate retail price range. Recommendations array stays EMPTY (these aren't owned); put the picks in the Narrative as a clearly formatted list.`;
+        body = `Suggest 1–2 specific wines (producer + wine name + vintage range, NOT from the user's cellar above) that would meaningfully round out their flight-building potential. ${ctx.theme_hint ? `Constraint or theme they're aiming for: ${ctx.theme_hint}.` : 'Look at gaps in their current cellar — varietals, regions, vintages, styles missing.'} For each suggestion include: producer + wine + vintage range, what flight it would unlock (with which existing bottles), why it fills a gap, and an approximate retail price range. Recommendations array stays EMPTY (these aren't owned); put the picks in the Narrative as a clearly formatted list.`;
+      } else {
+        body = `Build a tasting flight of 3–5 bottles in a deliberate order. Theme: ${ctx.theme || 'unspecified'}. Length: ${ctx.length || 3}. Each pick should teach the palate something in relation to the others; explain the progression in the narrative.`;
       }
-      return `Build a tasting flight of 3–5 bottles in a deliberate order. Theme: ${ctx.theme || 'unspecified'}. Length: ${ctx.length || 3}. Each pick should teach the palate something in relation to the others; explain the progression in the narrative.`;
+      break;
     case 'drink_now':
-      return `Pick 1–3 bottles to drink soon. Prioritize bottles entering or already in peak window over later vintages. Consider quantity (don't recommend the last bottle of a hard-to-replace wine unless asked).`;
+      body = `Pick 1–3 bottles to drink soon. Prioritize bottles entering or already in peak window over later vintages. Consider quantity (don't recommend the last bottle of a hard-to-replace wine unless asked).`;
+      break;
     default:
       return `Unrecognized request_type: ${type}.`;
   }
+  return body + NO_DAYNAME_COLLOQUIALISM;
 }
 
 export function renderPairingRequest(row, respondToPath, weather = null) {
