@@ -4,6 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#1a0f0f" />
+  <!-- Strip the URL fragment from outbound Referer headers so guest tokens
+       in #/guest/<token> don't leak to any external link a sommelier
+       response might include. -->
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>cellar27</title>
 
   <!-- PWA -->
@@ -23,8 +27,17 @@
        its 404 on the deployed site is silent and we don't need an inline
        onerror handler (which would block any future CSP). -->
   <script src="config.public.js"></script>
-  <!-- Supabase JS v2 from CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <!-- Supabase JS v2 from CDN. Pinned to a specific version + SRI hash so a
+       compromised jsDelivr (or a coffee-shop MitM) can't swap the bundle
+       and exfiltrate guest share tokens from the URL. To upgrade: pick a
+       new version, fetch the FILE (not the auto-minified .min.js — jsdelivr
+       re-minifies those per request and warns against SRI on them), and
+       recompute the hash:
+         curl -sL https://cdn.jsdelivr.net/npm/@supabase/supabase-js@<v>/dist/umd/supabase.js \
+           | openssl dgst -sha384 -binary | base64 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.105.1/dist/umd/supabase.js"
+          integrity="sha384-pNDx8ebKKncqRMS1aZKjmB1T1jdd6psogvE0+sPrwW/Sy94M6geGuQpYXQnLCdRq"
+          crossorigin="anonymous"></script>
   <!-- QR code generator (vendored, used by the Share view) -->
   <script src="vendor/qrcode.min.js"></script>
 </head>

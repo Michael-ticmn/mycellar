@@ -4,6 +4,43 @@
 
 ---
 
+## 2026-04-30 (late evening) — v0.9.6: guest-sharing hardening
+
+### Built
+
+Audit-driven follow-ups on the v0.9.5 guest-sharing surface — the only public, anonymous, AI-spawning code path in the project, so worth a real second pass. Five items shipped (the auditor surfaced ~10; verified two of the "high-impact" findings were over-stated and skipped them — see Decisions).
+
+**SQL — search_path lockdown + per-link QPS guard**
+[`supabase/migrations/0011_share_search_path_hardening.sql`](supabase/migrations/0011_share_search_path_hardening.sql)
+- Re-creates all five share-link `security definer` functions with `set search_path = pg_catalog, public` and fully schema-qualified table refs (`public.share_links`, `public.bottles`, `public.pairing_requests`, `public.pairing_responses`, `public.cellar27_allowed_users`). `extensions.gen_random_bytes` schema-qualified directly so we don't need `extensions` on search_path. Mirrors the pattern 0006 established for the older security-definer functions.
+- Added a per-link rate guard inside `cellar27_share_create_pairing_request`: counts requests created in the last 2 seconds for the resolved `share_link_id`; raises `rate_too_fast` if any. The guard runs *before* the atomic quota claim so a denied request doesn't burn a quota unit. Caps the link to ~one new request per 2 seconds, which matches owner expectation ("spread over the link's lifetime") and prevents a script from draining a 50-quota link in milliseconds. The 5-in-flight trigger and 250/day ceiling already bound severity, but neither paces.
+
+**Frontend — referrer + SRI on Supabase CDN**
+[`docs/index.html`](docs/index.html)
+- Added `<meta name="referrer" content="strict-origin-when-cross-origin" />`. Without this, if a guest follows any external link from a sommelier response, the destination sees `Referer: https://…/#/guest/<token>` and learns the share token. Modern browsers default close to this anyway, but explicit is safer on older mobile Safari.
+- Pinned the Supabase JS UMD script from `@2/dist/umd/supabase.min.js` to `@2.105.1/dist/umd/supabase.js` (the verbatim npm artifact) with `integrity="sha384-pNDx8ebKKncqRMS1aZKjmB1T1jdd6psogvE0+sPrwW/Sy94M6geGuQpYXQnLCdRq"` and `crossorigin="anonymous"`. Crucial detail: jsDelivr's `.min.js` variant is dynamically re-minified per request, so SRI on it is unsupported; the unsuffixed `.js` is the original npm tarball file served verbatim. Comment in the script tag documents the upgrade procedure (curl + openssl dgst).
+- Why this matters for guest mode specifically: guest tokens are the *only* secret in guest mode (no auth session, no localStorage credential). A compromised CDN or coffee-shop MitM swapping the Supabase bundle could read the token from `location.hash` and exfiltrate. SRI closes that.
+
+**Frontend — exponential backoff in guest polling**
+[`docs/js/guest.js`](docs/js/guest.js)
+- Replaced the flat 2-second polling loop with backoff: 500ms → 1s → 2s → cap at 5s. Drops worst-case call volume from ~150 to ~70 RPCs per 5-min request without changing first-result latency for the common 5–15s case. Added `rate_too_fast` to `prettyShareError` so the new server-side QPS guard surfaces a friendly message instead of raw `P0001`.
+
+**Bundle**
+- Rebuilt: 56.3 KB minified (was 49.4 at v0.9.1; growth from the merged-in share + guest code from v0.9.5 + the small backoff/error-message changes here).
+- `docs/version.js`: `0.9.5` → `0.9.6`.
+
+### Decisions
+- **Skipped "response scope allows cross-link probing"**: the auditor flagged that a guest with a valid token might enumerate other links' request IDs. Verified directly against [`0009_share_links_ai.sql:117-127`](supabase/migrations/0009_share_links_ai.sql#L117) — the JOIN already requires `pr.share_link_id = sl.id` AND `sl.token = p_token`, and request IDs are UUIDs (`gen_random_uuid()`), not enumerable. Both "doesn't exist" and "exists under different token" return zero rows — indistinguishable. No real leak.
+- **Skipped "guest bypasses owner rate limit"**: documented by-design behavior on [`0009:6-7`](supabase/migrations/0009_share_links_ai.sql#L6) — guests are intentionally on a per-link budget, not the owner's 100/hr. The 5-in-flight table trigger and 250/day global ceiling still fire because they're table-level, not RLS. The new per-link QPS guard in 0011 covers the residual abuse vector (in-link spam pacing).
+- **Skipped "timing-safe token comparison"**: 192 bits of entropy in `gen_random_bytes(24)` makes a timing oracle infeasible regardless of comparison constant-time-ness. Adding `pg_crypto.constant_time_eq` would be theater.
+- **Pinned `2.105.1` over latest-`@2`**: SRI requires bit-stable bytes. Trade-off: future security fixes in supabase-js require manual upgrade + hash refresh (one-line + curl). Acceptable for the security gain.
+- **Server-side QPS guard over client-side throttle**: a malicious script bypasses any client-side rate limit trivially. Server-side enforcement is the only one that actually counts.
+
+### Owner action required
+Apply [`supabase/migrations/0011_share_search_path_hardening.sql`](supabase/migrations/0011_share_search_path_hardening.sql) in the Supabase SQL Editor (in addition to 0006 + 0007 still pending from prior sessions). Restart watcher only needed for 0006/0007 — 0011 is RPC re-creation, no service restart.
+
+---
+
 ## 2026-04-30 (evening) — v0.9.5: guest sharing (temporary read+AI link with QR)
 
 ### Built

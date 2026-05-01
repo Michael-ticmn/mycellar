@@ -28,7 +28,12 @@ async function createAndAwait(token, requestType, context) {
   if (error) throw new Error(prettyShareError(error));
   if (!requestId) throw new Error('Could not create request.');
 
+  // Exponential backoff: most enrichments come back in 5–15s, so polling
+  // every 2s for the full 5 min is wasteful (~150 RPC calls). Start tight
+  // (500ms), double each round, cap at 5s. Worst-case call count drops
+  // from ~150 to ~70 while keeping the same first-result latency.
   const deadline = Date.now() + 5 * 60_000;
+  let delay = 500;
   while (Date.now() < deadline) {
     const { data, error: pollErr } = await sb.rpc('cellar27_share_get_response', {
       p_token: token,
@@ -42,7 +47,8 @@ async function createAndAwait(token, requestType, context) {
     if (row?.status === 'error') {
       throw new Error(row.error_message || 'Request failed.');
     }
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(delay * 2, 5000);
   }
   throw new Error('Timed out waiting for response (5 min).');
 }
@@ -51,6 +57,7 @@ function prettyShareError(err) {
   const m = err?.message || String(err);
   if (m.includes('quota_exhausted')) return 'This share link has used up its request budget.';
   if (m.includes('link_invalid'))    return 'This share link is invalid, revoked, or has expired.';
+  if (m.includes('rate_too_fast'))   return 'Slow down — wait a couple of seconds before sending another request.';
   return m;
 }
 

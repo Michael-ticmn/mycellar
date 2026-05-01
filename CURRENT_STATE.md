@@ -1,6 +1,6 @@
 # cellar27 — CURRENT_STATE.md
 
-## As of 2026-04-30 (v0.9.5 — guest sharing)
+## As of 2026-04-30 (v0.9.6 — guest-sharing hardening)
 
 **What exists and works:**
 
@@ -21,6 +21,11 @@
   - Email notification on limit hit (Gmail SMTP via App Password; cooldown-throttled).
 - End-to-end pair, flight, drink-now, scan-add, scan-pour, manual-add — all working from phone PWA.
 - **Guest sharing** (`#/share`): owner generates a short-lived, mobile-friendly link with a QR. Guests browse the cellar and run pair / flight / ask-sommelier without an account; price / notes / storage / label fields are stripped server-side. Per-link AI budget (independent of the owner's 100/hr quota), owner-picks-TTL at creation, one active link at a time, generating a new link revokes the prior. SECURITY DEFINER RPCs over an `anon` client; RLS on `bottles` and `pairing_requests` untouched.
+
+**Recently shipped (v0.9.6 — guest-sharing hardening):**
+- New SQL migration [`0011_share_search_path_hardening.sql`](supabase/migrations/0011_share_search_path_hardening.sql): the five share-link `security definer` RPCs now run with `search_path = pg_catalog, public` and schema-qualified table refs (matches what 0006 did for the older RPCs). Adds a per-link 1-req-per-2-second QPS guard inside `cellar27_share_create_pairing_request` so a guest with quota=50 can't drain it in <1s.
+- [`docs/index.html`](docs/index.html): `<meta name="referrer" content="strict-origin-when-cross-origin">` so guest tokens in `#/guest/<token>` don't leak via Referer to external sites the guest visits. Pinned the Supabase JS CDN script to `@2.105.1/dist/umd/supabase.js` (the verbatim npm artifact, not the dynamically-minified `.min.js`) with SRI + `crossorigin="anonymous"`.
+- [`docs/js/guest.js`](docs/js/guest.js): exponential backoff on the polling loop (500ms → 1s → 2s → cap at 5s) — drops worst-case poll volume ~2× without changing first-result latency. New `rate_too_fast` error message.
 
 **Recently shipped (v0.9.5):**
 - New tables / RPCs: `share_links`, `cellar27_share_resolve`, `cellar27_share_list_bottles`, `cellar27_share_create_pairing_request`, `cellar27_share_get_response`, `cellar27_share_create`. `pairing_requests` gains a nullable `share_link_id` so guest-originated requests are auditable and can't be polled by other tokens.
@@ -45,13 +50,13 @@
 - esbuild dev dep pinned to `^0.25` so `npm audit` stays clean.
 
 **Owner action queued (see [`HANDOFF_QUEUE.md`](HANDOFF_QUEUE.md)):**
-- Apply migrations 0006 + 0007 in the Supabase SQL Editor (0008 / 0009 / 0010 are already applied).
-- Restart the watcher to pick up the v0.9.0 hardening.
+- Apply migrations 0006, 0007, and 0011 in the Supabase SQL Editor (0008 / 0009 / 0010 are already applied).
+- Restart the watcher to pick up the v0.9.0 hardening (0011 doesn't need a watcher restart — it's RPC re-creation only).
 - Optional: drop two phone screenshots into `docs/screenshots/` and wire into the manifest for a richer install prompt.
 
 **What's broken / incomplete:**
 - Watcher runs on the owner's primary device, not an always-on host. Sleep = no AI processing during the sleep window. Acceptable for personal use.
 
-**Immediate next action:** owner runs migrations 0006 + 0007 + restarts the watcher.
+**Immediate next action:** owner runs migrations 0006 + 0007 + 0011 + restarts the watcher.
 
 **Which surface should act next:** owner.
