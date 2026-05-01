@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-04-30 (late PM) — v0.9.1: autoEnrich UX + innerHTML XSS audit
+
+### Built
+
+Three of the four "worth doing" items from the deferred audit list. The fourth (PWA screenshots) needs real raster captures from a phone — queued for the owner.
+
+**autoEnrich error UX** ([`docs/js/app.js`](docs/js/app.js))
+- New `enrichFailures` Map tracks the most recent enrichment failure per bottle. `autoEnrich()` records failures (both thrown errors and "no details returned" responses) into this map and triggers a re-render if the user is on the affected bottle's detail page.
+- The detail-page button changes shape based on state: `Fetching sommelier notes…` while in flight, **`Retry sommelier notes`** (with the error message in the `title` attribute) when failed, `Refresh details` / `Get details` otherwise.
+- Toast fires on failure if the user is on the affected bottle, so they know without scrolling.
+- Closes the spinner-forever bug — previously `autoEnrich` only logged to `console.warn`, leaving the user staring at "Fetching sommelier notes…" indefinitely.
+
+**innerHTML XSS audit** ([`docs/js/app.js`](docs/js/app.js))
+- Walked every `.innerHTML =` site in `app.js` (no other JS file uses it; verified via grep across `docs/js/`). 30+ sites in total.
+- Three real findings, all fixed:
+  - Line 220 (`mountCellar`): `${e.message}` interpolated raw on the error path → now `escapeHtml`'d.
+  - Line 825 (`mountDrinkNow`): same pattern → now `escapeHtml`'d.
+  - Lines 1280–1281 (`renderBottleDetailHTML`): label-thumbnail `src=` attributes were interpolating Supabase signed URLs raw while the sibling `data-zoom=` attributes were using `escapeAttr`. Practically safe (signed URLs are URL-encoded), but the inconsistency is a foot-gun. Now both sides use `escapeAttr`.
+- Added a comment above `escapeHtml` documenting the rule for future edits: anything from DB / Error / API / user input must go through `escapeHtml` (text) or `escapeAttr` (attribute); internal constants and verified-safe values (UUIDs, integers, fixed enum strings) can interpolate directly; markdown narrative goes through `markdownLite` which escapes first.
+- Other 27+ sites were verified safe — they use `escapeHtml` / `escapeAttr` consistently, render only internal constants, or render UUIDs/integers from the DB which contain no HTML-special chars.
+
+**SQL data-integrity invariant** ([`supabase/migrations/0007_claimed_by_invariant.sql`](supabase/migrations/0007_claimed_by_invariant.sql))
+- Added CHECK constraint on both `pairing_requests` and `scan_requests`: `status <> 'picked_up' OR claimed_by IS NOT NULL`. The watcher already honors this in practice (sets `claimed_by = hostname()` in the same atomic update that flips status to `'picked_up'`, and clears it on stale-claim retry); this just locks the invariant in so a future code path or a service-role hand-edit during debugging can't leave a row in a half-claimed state.
+- Added `NOT VALID` so the migration applies cleanly even if any legacy row pre-dates the invariant. Footer comment shows the optional `VALIDATE CONSTRAINT` step to upgrade to fully enforced once any legacy rows are cleaned up — safe to run with the watcher up since it only takes a SHARE UPDATE EXCLUSIVE lock.
+
+**Bundle**
+- Rebuilt: 49.4 KB minified (was 46.0 KB at v0.9.0). 3.4 KB growth from the new failure-tracking + retry-button code paths and the audit comment.
+- `docs/version.js`: `0.9.0` → `0.9.1`.
+
+### Decisions
+- **Skipped PWA screenshots**: needs actual phone screenshots in PNG; no way to auto-generate. Queued for the owner with file naming + dimensions in HANDOFF_QUEUE.
+- **Kept the audit comment near `escapeHtml`** instead of writing a `setSafeHTML(el, ...)` helper that callers must use. The current pattern (template literals with explicit `escapeHtml`/`escapeAttr` at each interpolation) is already the safest practical choice for this small file; a helper would create the illusion of safety without actually preventing a forgotten escape inside the template. The comment teaches the rule.
+- **`NOT VALID` over fully-validated**: zero risk of breaking the migration on apply, full enforcement available via a one-line manual upgrade.
+
+### Owner action required
+1. Apply [`supabase/migrations/0007_claimed_by_invariant.sql`](supabase/migrations/0007_claimed_by_invariant.sql) in the Supabase SQL Editor (in addition to 0006 from the prior session).
+2. Drop two phone screenshots into `docs/screenshots/` and wire them into the manifest if you want the install prompt UX boost.
+3. Hard-refresh the PWA after the v0.9.1 banner appears.
+
+---
+
 ## 2026-04-30 (PM) — v0.9.0: top-10 hardening / modernization batch
 
 ### Built

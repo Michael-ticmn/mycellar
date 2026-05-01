@@ -3,10 +3,16 @@
 ## Pending
 
 - [ ] [owner] Apply migration [`supabase/migrations/0006_search_path_hardening.sql`](supabase/migrations/0006_search_path_hardening.sql) in the Supabase SQL Editor (idempotent; re-runs the three security-definer functions with locked-down `search_path` and schema-qualified table refs).
+- [ ] [owner] Apply migration [`supabase/migrations/0007_claimed_by_invariant.sql`](supabase/migrations/0007_claimed_by_invariant.sql) in the Supabase SQL Editor (adds `claimed_by NOT NULL when status='picked_up'` CHECK constraints to both request tables, NOT VALID so it doesn't reject legacy rows; optional VALIDATE step in the file's footer comment).
 - [ ] [owner] Restart the watcher to pick up the v0.9.0 hardening (env filtering for spawned Claude, LRU rate-limit map, fail-fast realtime/chokidar handlers, parallel image downloads, graceful SIGINT/SIGTERM).
+- [ ] [owner] Drop two PNG screenshots into `docs/screenshots/` (suggested: `cellar-list-540x1170.png` and `bottle-detail-540x1170.png`, taken from the phone PWA at v0.9.1) and add a `screenshots` array to [`docs/manifest.webmanifest`](docs/manifest.webmanifest) so Chromium's richer install UI shows them. Couldn't auto-generate — needs real raster captures.
 
 ## Completed
 
+- [x] [Code, 2026-04-30] **v0.9.1 — autoEnrich UX + innerHTML XSS audit**:
+  - `autoEnrich()` no longer swallows errors silently. Failures are tracked per bottle in a new `enrichFailures` Map; the detail page shows a "Retry sommelier notes" button (with the error message in the title) instead of the spinner-forever bug. Toast on failure if the user is on the affected bottle.
+  - Audited every `.innerHTML =` site in [`docs/js/app.js`](docs/js/app.js) (no other JS file uses innerHTML). Three real findings fixed: two unescaped `e.message` interpolations on lines 220 and 825 (`mountCellar` / `mountDrinkNow` error paths), and `src=` attributes for the bottle-detail label thumbnails now go through `escapeAttr` (defensive — Supabase signed URLs are practically safe but consistency matters). Added an XSS rule comment above `escapeHtml` documenting the policy.
+  - SQL migration [`0007_claimed_by_invariant.sql`](supabase/migrations/0007_claimed_by_invariant.sql) formalizes the watcher's already-honored invariant: `status='picked_up' ⇒ claimed_by IS NOT NULL` on both request tables.
 - [x] [Code, 2026-04-30] **v0.9.0 — top-10 hardening / modernization batch**:
   - Watcher: env allowlist when spawning `claude` (no more SUPABASE_SERVICE_ROLE_KEY / SMTP_PASS leakage); LRU eviction on the rate-limit map (10k cap, prevents long-term memory leak); fail-fast on realtime CHANNEL_ERROR/TIMED_OUT/CLOSED, chokidar errors, and unhandledRejection (supervisor restarts a clean process); graceful SIGINT/SIGTERM that unsubscribes channels and closes the file watcher; parallel image downloads in scan requests (Promise.all → halves 2-image latency).
   - SQL: migration 0006 hardens `search_path` to `pg_catalog, public` and schema-qualifies every table ref in the three security-definer functions.

@@ -1,6 +1,6 @@
 # cellar27 — CURRENT_STATE.md
 
-## As of 2026-04-30 (v0.9.0 — top-10 hardening / modernization batch)
+## As of 2026-04-30 (v0.9.1 — autoEnrich UX + innerHTML XSS audit)
 
 **What exists and works:**
 
@@ -21,7 +21,12 @@
   - Email notification on limit hit (Gmail SMTP via App Password; cooldown-throttled).
 - End-to-end pair, flight, drink-now, scan-add, scan-pour, manual-add — all working from phone PWA.
 
-**Recently shipped (v0.9.0, this session):**
+**Recently shipped (v0.9.1):**
+- `autoEnrich()` no longer fails silently — failed enrichments surface as a `Retry sommelier notes` button on the bottle detail page (with the error in the title), plus a toast.
+- Audited every `innerHTML =` site in [`docs/js/app.js`](docs/js/app.js); fixed two unescaped `e.message` paths and made the bottle-detail `<img src=>` consistent with `<img data-zoom=>` (both use `escapeAttr` now).
+- New SQL migration [`0007_claimed_by_invariant.sql`](supabase/migrations/0007_claimed_by_invariant.sql) formalizes the `status='picked_up' ⇒ claimed_by IS NOT NULL` invariant on both request tables.
+
+**Recently shipped (v0.9.0):**
 - Frontend bundled + minified via esbuild (`npm run build:docs` → [`docs/js/dist/app.bundle.js`](docs/js/dist/app.bundle.js), ~46 KB minified).
 - AbortController on view fetch — no more late-arriving HTML overwriting the current view.
 - Inline `onerror` removed from `index.html`; `config.local.js` is now loaded dynamically from JS (CSP-ready).
@@ -33,12 +38,13 @@
 - esbuild dev dep pinned to `^0.25` so `npm audit` stays clean.
 
 **Owner action queued (see [`HANDOFF_QUEUE.md`](HANDOFF_QUEUE.md)):**
-- Apply migration 0006 in the Supabase SQL Editor.
+- Apply migrations 0006 + 0007 in the Supabase SQL Editor.
 - Restart the watcher to pick up the v0.9.0 hardening.
+- Optional: drop two phone screenshots into `docs/screenshots/` and wire into the manifest for a richer install prompt.
 
 **What's broken / incomplete:**
 - Watcher runs on the owner's primary device, not an always-on host. Sleep = no AI processing during the sleep window. Acceptable for personal use.
 
-**Immediate next action:** owner runs migration 0006 + restarts the watcher.
+**Immediate next action:** owner runs migrations 0006 + 0007 + restarts the watcher.
 
 **Which surface should act next:** owner.

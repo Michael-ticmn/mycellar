@@ -7,6 +7,7 @@ import {
   uploadCapture, submitScanRequest, waitForScanResponse,
   subscribeForResponse, signedUrlForImage, requestEnrichment,
 } from './scan.js';
+import { resolveShare, listBottlesForShare } from './guest.js';
 
 const STYLES = [
   'light_red','medium_red','full_red',
@@ -19,7 +20,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 // ── Routing (hash-based, supports `bottle/<id>`) ──────────────────
-const ROUTES = ['cellar', 'add', 'edit', 'pairing', 'flight', 'drink-now', 'manage', 'scan', 'bottle'];
+const ROUTES = ['cellar', 'add', 'edit', 'pairing', 'flight', 'drink-now', 'manage', 'scan', 'bottle', 'guest'];
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
   const [route, ...params] = h.split('/');
@@ -44,13 +45,28 @@ async function loadView(name) {
 }
 
 async function render(providedSession) {
+  const { route, params } = parseHash();
+
+  // Guest share route: anonymous, token-gated, no auth required.
+  if (route === 'guest') {
+    $('#auth-view').hidden = true;
+    $('#app-view').hidden = false;
+    $('#user-email').textContent = '';
+    document.body.classList.add('guest-mode');
+    const html = await loadView('guest');
+    if (html === null) return;
+    $('#main').innerHTML = html;
+    await mountGuest(params[0]);
+    return;
+  }
+  document.body.classList.remove('guest-mode');
+
   const session = providedSession !== undefined ? providedSession : await getSession();
   if (!session) { renderAuth(); return; }
   $('#auth-view').hidden = true;
   $('#app-view').hidden = false;
   $('#user-email').textContent = session.user.email;
 
-  const { route, params } = parseHash();
   $$('nav a').forEach((a) => {
     a.classList.toggle('active', a.dataset.route === route);
   });
@@ -75,6 +91,114 @@ async function mountView(route, params = []) {
   }
 }
 
+// ── Guest share view (anonymous, token-gated, read-only) ──────────
+async function mountGuest(token) {
+  const banner = $('#guest-banner');
+  const grid = $('#guest-grid');
+  const toolbar = $('#guest-toolbar');
+  if (!banner || !grid) return;
+
+  if (!token) {
+    banner.innerHTML = '<p class="error">Missing share token.</p>';
+    return;
+  }
+
+  let meta;
+  try { meta = await resolveShare(token); }
+  catch (e) {
+    banner.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
+    return;
+  }
+  if (!meta) {
+    banner.innerHTML = '<p class="error">This share link is invalid, revoked, or has expired.</p>';
+    return;
+  }
+
+  const expiresAt = new Date(meta.expires_at);
+  const hoursLeft = Math.max(0, Math.round((expiresAt - Date.now()) / 36e5));
+  banner.innerHTML = `<p class="muted">Shared cellar · expires in ~${hoursLeft}h</p>`;
+
+  let bottles;
+  try { bottles = await listBottlesForShare(token); }
+  catch (e) {
+    grid.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
+    return;
+  }
+  if (!bottles.length) {
+    grid.innerHTML = '<p class="muted">This cellar is empty.</p>';
+    return;
+  }
+
+  toolbar.hidden = false;
+
+  let activeFilter = 'all';
+  let sortMode = 'producer';
+  let searchTerm = '';
+
+  const repaint = () => {
+    let view = bottles.slice();
+    if (activeFilter !== 'all') {
+      const allowed = new Set(STYLE_GROUPS[activeFilter] || []);
+      view = view.filter((b) => allowed.has(b.style));
+    }
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      view = view.filter((b) => [b.producer, b.wine_name, b.varietal, b.region, b.country]
+        .some((s) => (s || '').toLowerCase().includes(q)));
+    }
+    const cmp = {
+      producer:       (a, b) => (a.producer || '').localeCompare(b.producer || ''),
+      vintage:        (a, b) => (b.vintage || 0) - (a.vintage || 0),
+      vintage_oldest: (a, b) => (a.vintage || 9999) - (b.vintage || 9999),
+      drink_end:      (a, b) => (a.drink_window_end || 9999) - (b.drink_window_end || 9999),
+    }[sortMode] || (() => 0);
+    view.sort(cmp);
+
+    const count = $('#guest-count');
+    if (count) {
+      count.hidden = view.length === bottles.length && !searchTerm && activeFilter === 'all';
+      count.textContent = `${view.length} of ${bottles.length} bottles`;
+    }
+    if (!view.length) { grid.innerHTML = '<p class="muted">No bottles match.</p>'; return; }
+    grid.innerHTML = view.map(guestBottleRowHTML).join('');
+  };
+
+  $('#guest-search')?.addEventListener('input', (e) => { searchTerm = e.target.value.trim(); repaint(); });
+  $('#guest-sort')?.addEventListener('change', (e) => { sortMode = e.target.value; repaint(); });
+  $$('#guest-filters .chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      $$('#guest-filters .chip').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      activeFilter = chip.dataset.styleFilter;
+      repaint();
+    });
+  });
+
+  repaint();
+}
+
+function guestBottleRowHTML(b) {
+  const window = (b.drink_window_start && b.drink_window_end)
+    ? `${b.drink_window_start}–${b.drink_window_end}`
+    : '';
+  const subParts = [
+    escapeHtml(b.varietal),
+    b.vintage ? String(b.vintage) : '',
+    b.region ? escapeHtml(b.region) : '',
+  ].filter(Boolean).join(' · ');
+  return `
+    <article class="bottle-row" data-style="${escapeAttr(b.style || '')}">
+      <div class="bottle-row-main">
+        <h3 class="bottle-row-title">${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
+        <p class="bottle-row-sub muted">${subParts}</p>
+      </div>
+      <div class="bottle-row-aside">
+        <span class="qty">×${b.quantity}</span>
+        ${window ? `<span class="window muted">${window}</span>` : ''}
+      </div>
+    </article>`;
+}
+
 // ── Cellar grid (with search / filter / sort) ─────────────────────
 const STYLE_GROUPS = {
   red:       ['light_red', 'medium_red', 'full_red'],
@@ -94,7 +218,7 @@ async function mountCellar() {
   grid.innerHTML = '<p class="muted">Loading…</p>';
   let bottles;
   try { bottles = await listBottles(); }
-  catch (e) { grid.innerHTML = `<p class="error">${e.message}</p>`; return; }
+  catch (e) { grid.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`; return; }
   if (!bottles.length) {
     grid.innerHTML = '<p class="muted">Empty cellar. <a href="#/scan">Scan a bottle →</a> or <a href="#/add">add manually</a>.</p>';
     return;
@@ -317,21 +441,31 @@ async function mountAddBottle(bottleId) {
 // Tracks bottles currently being enriched so the detail view can show a
 // "Fetching sommelier notes…" banner instead of the Get-details button.
 const enrichingBottles = new Set();
+// Records the most recent enrichment failure per bottle so the detail page
+// can offer a Retry instead of the spinner-forever bug from before.
+const enrichFailures = new Map(); // bottleId → error message
 async function autoEnrich(bottleId) {
   if (enrichingBottles.has(bottleId)) return;
   enrichingBottles.add(bottleId);
+  enrichFailures.delete(bottleId);
+  if (location.hash === `#/bottle/${bottleId}`) render();
   try {
     const response = await requestEnrichment(bottleId);
     const details = response.extracted?.details || response.extracted || null;
     if (details) {
       await updateBottle(bottleId, { details });
-      // If the user is still on this bottle's detail page, re-render with details.
-      if (location.hash === `#/bottle/${bottleId}`) render();
+    } else {
+      enrichFailures.set(bottleId, 'No details returned by sommelier.');
     }
   } catch (err) {
     console.warn('[cellar27] autoEnrich failed:', err);
+    enrichFailures.set(bottleId, err?.message || 'Sommelier request failed.');
+    if (location.hash === `#/bottle/${bottleId}`) {
+      showToast(`Couldn't fetch sommelier notes — tap Retry on the bottle.`);
+    }
   } finally {
     enrichingBottles.delete(bottleId);
+    if (location.hash === `#/bottle/${bottleId}`) render();
   }
 }
 
@@ -689,7 +823,7 @@ async function mountDrinkNow() {
   const yr = new Date().getFullYear();
   let bottles;
   try { bottles = await listBottles(); }
-  catch (e) { root.innerHTML = `<p class="error">${e.message}</p>`; return; }
+  catch (e) { root.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`; return; }
   const buckets = { past: [], peak: [], entering: [] };
   for (const b of bottles) {
     if (b.drink_window_start == null || b.drink_window_end == null) continue;
@@ -1144,16 +1278,19 @@ function renderBottleDetailHTML(b, frontUrl, backUrl) {
   const w = (b.drink_window_start && b.drink_window_end) ? `${b.drink_window_start}–${b.drink_window_end}` : '—';
   const photos = (frontUrl || backUrl) ? `
     <div class="bottle-detail-photos">
-      ${frontUrl ? `<img src="${frontUrl}" alt="Front label" data-zoom="${escapeAttr(frontUrl)}" />` : ''}
-      ${backUrl  ? `<img src="${backUrl}"  alt="Back label"  data-zoom="${escapeAttr(backUrl)}"  />` : ''}
+      ${frontUrl ? `<img src="${escapeAttr(frontUrl)}" alt="Front label" data-zoom="${escapeAttr(frontUrl)}" />` : ''}
+      ${backUrl  ? `<img src="${escapeAttr(backUrl)}"  alt="Back label"  data-zoom="${escapeAttr(backUrl)}"  />` : ''}
     </div>` : '';
 
   const isEnriching = enrichingBottles.has(b.id);
+  const enrichErr = enrichFailures.get(b.id);
   const detailsBtn = isEnriching
     ? `<span class="muted" style="align-self:center; padding: 0.5rem 0;">Fetching sommelier notes…</span>`
-    : (b.details
-        ? `<button data-action="refresh-details" class="ghost">Refresh details</button>`
-        : `<button data-action="fetch-details" class="ghost">Get details</button>`);
+    : enrichErr
+      ? `<button data-action="retry-enrich" class="ghost" title="${escapeAttr(enrichErr)}">Retry sommelier notes</button>`
+      : (b.details
+          ? `<button data-action="refresh-details" class="ghost">Refresh details</button>`
+          : `<button data-action="fetch-details" class="ghost">Get details</button>`);
 
   return `
     <article class="bottle-detail-card" data-style="${escapeAttr(b.style || '')}">
@@ -1214,6 +1351,10 @@ function wireBottleDetail(root, bottle) {
       if (!confirm('Delete this bottle?')) return;
       try { await deleteBottle(bottle.id); location.hash = '#/cellar'; }
       catch (err) { alert(err.message); }
+      return;
+    }
+    if (action === 'retry-enrich') {
+      autoEnrich(bottle.id);
       return;
     }
     if (action === 'fetch-details' || action === 'refresh-details') {
@@ -1326,6 +1467,13 @@ function numOrNull(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
+// XSS rule for this file: any string interpolated into an innerHTML
+// template that originates from the DB, an Error message, an upstream
+// API, or user input MUST go through escapeHtml (text content) or
+// escapeAttr (attribute value). Internal constants and verified-safe
+// values (UUIDs, integers, fixed enum strings) can be interpolated
+// directly. Markdown-shaped narrative fields go through markdownLite,
+// which escapes first and then applies a small allowlist of inline tags.
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
