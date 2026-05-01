@@ -2,10 +2,11 @@
 
 ## Pending
 
-- [ ] [FROM: Code → Code, optional] Write `scripts/security-smoke-test.mjs` (was P1-3 in the original security plan; never built). Should exercise: allowlist rejection for non-members, rate-limit rejection past N, in-flight cap rejection past 5, daily-ceiling refusal — all without spawning Claude for blocked requests.
+(empty)
 
 ## Completed
 
+- [x] [Code, 2026-04-30] **`scripts/security-smoke-test.mjs`**: exercises allowlist predicate, DB rate limit RPC, in-flight cap trigger (5→6), and daily-ceiling RPC — all without spawning Claude. Self-cleans seed rows. Closes P1-3 from the original security plan.
 - [x] [Code, 2026-04-30] **Tier 1 + Tier 2 limit tuning**: DB rate limit 20→100/hr, watcher rate limit 20→100/hr (env-tunable), daily ceiling 100→250, email notify on limit hits via SMTP with per-key cooldown. ([507a778](https://github.com/Michael-ticmn/mycellar/commit/507a778))
 - [x] [Code, 2026-04-30] **docs/SECURITY.md**: single source of truth for all gates + tune/bypass cookbook. Unstaled ARCHITECTURE.md "Security shape". ([bf9cc4d](https://github.com/Michael-ticmn/mycellar/commit/bf9cc4d))
 - [x] [Code, 2026-04-30] **Read-aloud + voice picker**: SpeechSynthesis on every narrative; ▾ caret opens shared popover (voice radio list, English filter, 0.7–1.3× rate slider, Test). Persisted in localStorage. (v0.8.2 + v0.8.3)

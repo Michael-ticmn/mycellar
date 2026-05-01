@@ -144,4 +144,10 @@ This is intentionally informational only — no clickable approve / deny in the 
 
 ## Verification
 
-`scripts/security-smoke-test.mjs` (TODO — not yet written; was P1-3 in the original plan).
+[`scripts/security-smoke-test.mjs`](../scripts/security-smoke-test.mjs) — exercises all four spawn-gating gates (allowlist predicate, DB rate limit, in-flight cap trigger, daily ceiling) without spawning Claude. Run with the watcher stopped:
+
+```
+SMOKE_TEST_USER_ID=<a real auth.users uuid> node scripts/security-smoke-test.mjs
+```
+
+Reads `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` from `watcher/.env` if present. Re-uses `@supabase/supabase-js` from `watcher/node_modules` so it has no install of its own. Cleans up its own seed rows on exit.
