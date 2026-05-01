@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Bridges Supabase Realtime ↔ Claude Code file-drop folder for cellar27.",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
@@ -14,6 +16,6 @@
     "@supabase/supabase-js": "^2.45.0",
     "chokidar": "^3.6.0",
     "dotenv": "^16.4.5",
-    "nodemailer": "^6.9.14"
+    "nodemailer": "^8.0.7"
   }
 }
