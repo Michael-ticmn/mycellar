@@ -25,6 +25,8 @@
   <script src="config.public.js"></script>
   <!-- Supabase JS v2 from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <!-- QR code generator (vendored, used by the Share view) -->
+  <script src="vendor/qrcode.min.js"></script>
 </head>
 <body>
   <header class="topbar">
@@ -60,6 +62,17 @@
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
                 d="M7 3 h10 l-1.2 7a4.8 4.8 0 0 1 -7.6 0 z M12 14.8 V20 M8.5 20 h7" />
+        </svg>
+      </a>
+      <a href="#/share" data-route="share" aria-label="Share" title="Share">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="6"  cy="12" r="2.4" />
+            <circle cx="17" cy="6"  r="2.4" />
+            <circle cx="17" cy="18" r="2.4" />
+            <path d="M8.1 11 L15 7" />
+            <path d="M8.1 13 L15 17" />
+          </g>
         </svg>
       </a>
     </nav>

@@ -7,7 +7,12 @@ import {
   uploadCapture, submitScanRequest, waitForScanResponse,
   subscribeForResponse, signedUrlForImage, requestEnrichment,
 } from './scan.js';
-import { resolveShare, listBottlesForShare } from './guest.js';
+import {
+  resolveShare, listBottlesForShare,
+  requestPairingForShare, requestFlightForShare,
+  requestFlightExtrasForShare, requestDrinkNowForShare,
+} from './guest.js';
+import { getActiveShareLink, createShareLink, revokeShareLink, shareUrlFor } from './share.js';
 
 const STYLES = [
   'light_red','medium_red','full_red',
@@ -20,7 +25,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 // ── Routing (hash-based, supports `bottle/<id>`) ──────────────────
-const ROUTES = ['cellar', 'add', 'edit', 'pairing', 'flight', 'drink-now', 'manage', 'scan', 'bottle', 'guest'];
+const ROUTES = ['cellar', 'add', 'edit', 'pairing', 'flight', 'drink-now', 'manage', 'scan', 'bottle', 'guest', 'share'];
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
   const [route, ...params] = h.split('/');
@@ -88,7 +93,75 @@ async function mountView(route, params = []) {
     case 'manage':     return mountManage();
     case 'scan':       return mountManage(); // legacy alias
     case 'bottle':     return mountBottleDetail(params[0]);
+    case 'share':      return mountShare();
   }
+}
+
+// ── Share (owner-side: generate / revoke a guest link) ────────────
+async function mountShare() {
+  const form = $('#share-create-form');
+  const errEl = $('#share-create-error');
+  if (!form) return;
+
+  const renderActive = (link) => {
+    const panel = $('#share-active');
+    if (!panel) return;
+    if (!link) { panel.hidden = true; return; }
+    panel.hidden = false;
+    const url = shareUrlFor(link.token);
+    $('#share-url').value = url;
+
+    // QRCode is loaded as a global script tag in index.html.
+    const qrEl = $('#share-qr');
+    if (qrEl && window.QRCode) {
+      qrEl.innerHTML = '';
+      // eslint-disable-next-line no-new
+      new window.QRCode(qrEl, {
+        text: url,
+        width: 220,
+        height: 220,
+        correctLevel: window.QRCode.CorrectLevel.M,
+      });
+    }
+
+    const expiresAt = new Date(link.expires_at);
+    const hoursLeft = Math.max(0, Math.round((expiresAt - Date.now()) / 36e5));
+    const aiLeft = Math.max(0, (link.ai_quota || 0) - (link.ai_used || 0));
+    $('#share-meta').textContent = `${aiLeft} of ${link.ai_quota} AI requests left · expires in ~${hoursLeft}h`;
+
+    $('#share-revoke').onclick = async () => {
+      if (!confirm('Revoke this share link? Anyone using it will lose access immediately.')) return;
+      try {
+        await revokeShareLink(link.id);
+        renderActive(null);
+      } catch (e) { alert(e.message); }
+    };
+    $('#share-copy').onclick = async () => {
+      try { await navigator.clipboard.writeText(url); showToast('Link copied'); }
+      catch { $('#share-url').select(); }
+    };
+  };
+
+  try { renderActive(await getActiveShareLink()); }
+  catch (e) { errEl.textContent = e.message; }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errEl.textContent = '';
+    const fd = new FormData(form);
+    const ttlHours = parseInt(fd.get('ttl_hours'), 10);
+    const aiQuota  = parseInt(fd.get('ai_quota'),  10);
+    const btn = $('#share-create-btn');
+    btn.disabled = true;
+    try {
+      const link = await createShareLink({ ttlHours, aiQuota });
+      renderActive(link);
+    } catch (err) {
+      errEl.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 // ── Guest share view (anonymous, token-gated, read-only) ──────────
@@ -96,6 +169,7 @@ async function mountGuest(token) {
   const banner = $('#guest-banner');
   const grid = $('#guest-grid');
   const toolbar = $('#guest-toolbar');
+  const tabs = $('#guest-tabs');
   if (!banner || !grid) return;
 
   if (!token) {
@@ -114,9 +188,11 @@ async function mountGuest(token) {
     return;
   }
 
-  const expiresAt = new Date(meta.expires_at);
-  const hoursLeft = Math.max(0, Math.round((expiresAt - Date.now()) / 36e5));
-  banner.innerHTML = `<p class="muted">Shared cellar · expires in ~${hoursLeft}h</p>`;
+  const renderBanner = (m) => {
+    const left = Math.max(0, (m.ai_quota || 0) - (m.ai_used || 0));
+    banner.innerHTML = `<p class="muted">Shared cellar · ${left} request${left === 1 ? '' : 's'} left</p>`;
+  };
+  renderBanner(meta);
 
   let bottles;
   try { bottles = await listBottlesForShare(token); }
@@ -129,7 +205,83 @@ async function mountGuest(token) {
     return;
   }
 
-  toolbar.hidden = false;
+  if (toolbar) toolbar.hidden = false;
+  if (tabs) tabs.hidden = false;
+
+  // In-memory bottle map for guest-side recommendation rendering. The
+  // anon client cannot read `bottles` directly (RLS), so getBottle()
+  // would fail — recommendations look up by id from this map instead.
+  const bottleById = new Map(bottles.map((b) => [b.id, b]));
+
+  // Modal close (backdrop or ✕)
+  $$('#guest-bottle-modal [data-close]').forEach((el) => {
+    el.addEventListener('click', () => { $('#guest-bottle-modal').hidden = true; });
+  });
+
+  // Tabs
+  $$('.guest-tab', tabs).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.tab;
+      $$('.guest-tab', tabs).forEach((b) => b.classList.toggle('active', b === btn));
+      $$('.guest-pane').forEach((p) => { p.hidden = p.dataset.pane !== target; });
+    });
+  });
+
+  // After every successful AI request: re-fetch quota and update the banner.
+  const refreshQuota = async () => {
+    try {
+      const m = await resolveShare(token);
+      if (m) renderBanner(m);
+    } catch { /* non-fatal */ }
+  };
+
+  // Pair
+  $('#guest-pair-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const out = $('#guest-pair-result');
+    setBusy(out, 'Asking the sommelier… (up to a couple of minutes)');
+    try {
+      const { response } = await requestPairingForShare(token, {
+        dish: fd.get('dish').trim(),
+        guests: numOrNull(fd.get('guests')) ?? 2,
+        occasion: fd.get('occasion'),
+        constraints: fd.get('constraints')?.trim() || null,
+      });
+      await renderGuestRecommendations(out, response, bottleById);
+    } catch (err) { out.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+    refreshQuota();
+  });
+
+  // Flight
+  $('#guest-flight-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const out = $('#guest-flight-result');
+    setBusy(out, 'Building the flight…');
+    try {
+      const { response } = await requestFlightForShare(token, {
+        theme: fd.get('theme'),
+        guests: numOrNull(fd.get('guests')) ?? 4,
+        length: numOrNull(fd.get('length')) ?? 3,
+      });
+      await renderGuestRecommendations(out, response, bottleById);
+    } catch (err) { out.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+    refreshQuota();
+  });
+
+  // Drink now / sommelier
+  $('#guest-drinknow-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const out = $('#guest-drinknow-result');
+    setBusy(out, 'Asking the sommelier…');
+    try {
+      const { response } = await requestDrinkNowForShare(token, { notes: fd.get('notes')?.trim() || null });
+      await renderGuestRecommendations(out, response, bottleById);
+    } catch (err) { out.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+    refreshQuota();
+  });
 
   let activeFilter = 'all';
   let sortMode = 'producer';
@@ -161,6 +313,7 @@ async function mountGuest(token) {
     }
     if (!view.length) { grid.innerHTML = '<p class="muted">No bottles match.</p>'; return; }
     grid.innerHTML = view.map(guestBottleRowHTML).join('');
+    wireGuestBottleClicks(grid, bottleById);
   };
 
   $('#guest-search')?.addEventListener('input', (e) => { searchTerm = e.target.value.trim(); repaint(); });
@@ -177,6 +330,64 @@ async function mountGuest(token) {
   repaint();
 }
 
+async function renderGuestRecommendations(resultEl, response, bottleById) {
+  const recs = Array.isArray(response.recommendations) ? response.recommendations : [];
+  const cards = recs.map((r) => {
+    const bottle = bottleById.get(r.bottle_id);
+    if (!bottle) {
+      return `<article class="bottle-card"><div class="bottle-meta">
+        <h3 class="muted">Unknown bottle</h3>
+        <p class="muted">id: ${escapeHtml(r.bottle_id)}</p>
+        <p>${escapeHtml(r.reasoning || '')}</p>
+      </div></article>`;
+    }
+    return `<article class="bottle-card" data-bottle-id="${escapeAttr(bottle.id)}" data-style="${escapeAttr(bottle.style || '')}" tabindex="0">
+      <div class="bottle-photo placeholder">${escapeHtml((bottle.producer || '?')[0])}</div>
+      <div class="bottle-meta">
+        <h3>${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}</h3>
+        <p class="muted">${escapeHtml(bottle.varietal)}${bottle.vintage ? ` · ${bottle.vintage}` : ''}</p>
+        <p><span class="qty">${escapeHtml(r.confidence || 'medium')}</span> · ${escapeHtml(r.reasoning || '')}</p>
+      </div>
+    </article>`;
+  });
+  const narrative = narrativeBlockHTML(response.narrative, { heading: 'Narrative' });
+  resultEl.innerHTML = `
+    ${narrative}
+    <section>
+      <h2>Picks</h2>
+      <div class="grid">${cards.join('') || '<p class="muted">(no recommendations)</p>'}</div>
+    </section>`;
+  wireGuestBottleClicks(resultEl, bottleById);
+}
+
+function wireGuestBottleClicks(root, bottleById) {
+  $$('[data-bottle-id]', root).forEach((node) => {
+    node.addEventListener('click', () => {
+      const b = bottleById.get(node.dataset.bottleId);
+      if (b) showGuestBottleDetail(b);
+    });
+  });
+}
+
+function showGuestBottleDetail(b) {
+  const modal = $('#guest-bottle-modal');
+  if (!modal) return;
+  const sub = [b.varietal, b.vintage, b.region, b.country].filter(Boolean).map(escapeHtml).join(' · ');
+  const window = (b.drink_window_start && b.drink_window_end)
+    ? `${b.drink_window_start}–${b.drink_window_end}` : '—';
+  $('#guest-bottle-detail').innerHTML = `
+    <h2>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h2>
+    <p class="muted">${sub}</p>
+    <dl class="bottle-meta-grid">
+      <dt>Style</dt><dd>${escapeHtml(b.style || '—')}</dd>
+      ${b.sweetness ? `<dt>Sweetness</dt><dd>${escapeHtml(b.sweetness)}</dd>` : ''}
+      ${b.body ? `<dt>Body</dt><dd>${b.body} / 5</dd>` : ''}
+      <dt>Quantity</dt><dd>×${b.quantity}</dd>
+      <dt>Drink window</dt><dd>${window}</dd>
+    </dl>`;
+  modal.hidden = false;
+}
+
 function guestBottleRowHTML(b) {
   const window = (b.drink_window_start && b.drink_window_end)
     ? `${b.drink_window_start}–${b.drink_window_end}`
@@ -187,7 +398,7 @@ function guestBottleRowHTML(b) {
     b.region ? escapeHtml(b.region) : '',
   ].filter(Boolean).join(' · ');
   return `
-    <article class="bottle-row" data-style="${escapeAttr(b.style || '')}">
+    <article class="bottle-row" data-bottle-id="${escapeAttr(b.id)}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
       <div class="bottle-row-main">
         <h3 class="bottle-row-title">${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
         <p class="bottle-row-sub muted">${subParts}</p>
@@ -536,7 +747,7 @@ async function renderRecommendations(resultEl, response) {
         <p>${escapeHtml(r.reasoning || '')}</p>
       </div></article>`;
     }
-    return `<article class="bottle-card" data-style="${escapeAttr(bottle.style || '')}">
+    return `<article class="bottle-card" data-bottle-id="${escapeAttr(bottle.id)}" data-style="${escapeAttr(bottle.style || '')}" tabindex="0">
       <div class="bottle-photo placeholder">${escapeHtml((bottle.producer || '?')[0])}</div>
       <div class="bottle-meta">
         <h3>${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}</h3>
@@ -547,11 +758,17 @@ async function renderRecommendations(resultEl, response) {
   }));
   const narrative = narrativeBlockHTML(response.narrative, { heading: 'Narrative' });
   resultEl.innerHTML = `
+    ${narrative}
     <section>
       <h2>Picks</h2>
       <div class="grid">${cards.join('') || '<p class="muted">(no recommendations)</p>'}</div>
-    </section>
-    ${narrative}`;
+    </section>`;
+  $$('[data-bottle-id]', resultEl).forEach((node) => {
+    node.addEventListener('click', () => {
+      const id = node.dataset.bottleId;
+      if (id) location.hash = `#/bottle/${id}`;
+    });
+  });
 }
 
 // Wrap a narrative blob with a Read-aloud button. Heading is optional;

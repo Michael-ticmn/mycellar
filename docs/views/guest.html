@@ -1,0 +1,106 @@
+<section class="guest-view">
+  <div class="guest-banner" id="guest-banner">
+    <p class="muted">Loading shared cellar…</p>
+  </div>
+
+  <nav class="guest-tabs" id="guest-tabs" role="tablist" hidden>
+    <button class="guest-tab active" data-tab="cellar"   role="tab">Cellar</button>
+    <button class="guest-tab"        data-tab="pair"     role="tab">Pair</button>
+    <button class="guest-tab"        data-tab="flight"   role="tab">Flight</button>
+    <button class="guest-tab"        data-tab="drinknow" role="tab">Sommelier</button>
+  </nav>
+
+  <!-- Cellar tab -->
+  <div class="guest-pane" data-pane="cellar">
+    <div class="cellar-toolbar guest-toolbar" hidden id="guest-toolbar">
+      <input type="search" id="guest-search" placeholder="Search producer, wine, region…" autocomplete="off" />
+      <div class="filter-chips" id="guest-filters" role="tablist" aria-label="Filter by style">
+        <button class="chip active" data-style-filter="all">All</button>
+        <button class="chip" data-style-filter="red">Red</button>
+        <button class="chip" data-style-filter="white">White</button>
+        <button class="chip" data-style-filter="rose">Rosé</button>
+        <button class="chip" data-style-filter="sparkling">Sparkling</button>
+        <button class="chip" data-style-filter="sweet">Sweet</button>
+      </div>
+      <select id="guest-sort" aria-label="Sort">
+        <option value="producer">Producer A–Z</option>
+        <option value="vintage">Vintage (newest)</option>
+        <option value="vintage_oldest">Vintage (oldest)</option>
+        <option value="drink_end">Drink window end</option>
+      </select>
+    </div>
+    <p class="muted" id="guest-count" hidden></p>
+    <div id="guest-grid" class="cellar-list"></div>
+  </div>
+
+  <!-- Pair tab -->
+  <div class="guest-pane" data-pane="pair" hidden>
+    <h1>Pairing</h1>
+    <p class="muted">Describe the dish; the sommelier picks 1–2 bottles from this cellar.</p>
+    <form id="guest-pair-form">
+      <label>Dish<textarea name="dish" rows="2" placeholder="e.g. seared duck breast with cherry reduction" required></textarea></label>
+      <div class="row">
+        <label style="flex:1">Guests<input name="guests" type="number" min="1" value="2" /></label>
+        <label style="flex:1">Occasion
+          <select name="occasion">
+            <option value="weeknight">weeknight</option>
+            <option value="dinner_party">dinner party</option>
+            <option value="celebration">celebration</option>
+            <option value="casual">casual</option>
+          </select>
+        </label>
+      </div>
+      <label>Constraints (optional)<input name="constraints" placeholder="e.g. avoid heavy reds" /></label>
+      <button type="submit">Get pairing</button>
+    </form>
+    <div id="guest-pair-result"></div>
+  </div>
+
+  <!-- Flight tab -->
+  <div class="guest-pane" data-pane="flight" hidden>
+    <h1>Flight builder</h1>
+    <p class="muted">Tell the sommelier a theme; 3–5 bottles from this cellar will be ordered into a flight.</p>
+    <form id="guest-flight-form">
+      <label>Theme
+        <select name="theme">
+          <option value="vertical">Vertical (same wine, different vintages)</option>
+          <option value="horizontal">Horizontal (same vintage, different producers)</option>
+          <option value="varietal_comparison">Varietal comparison</option>
+          <option value="regional_tour">Regional tour</option>
+          <option value="surprise_me">Surprise me</option>
+        </select>
+      </label>
+      <div class="row">
+        <label style="flex:1">Guests<input name="guests" type="number" min="1" value="4" /></label>
+        <label style="flex:1">Length
+          <select name="length">
+            <option value="3">3 bottles</option>
+            <option value="5">5 bottles</option>
+          </select>
+        </label>
+      </div>
+      <button type="submit">Build flight</button>
+    </form>
+    <div id="guest-flight-result"></div>
+  </div>
+
+  <!-- Bottle detail modal (anonymous guests can't access /bottle/:id) -->
+  <div id="guest-bottle-modal" class="guest-modal" hidden role="dialog" aria-label="Bottle details">
+    <div class="guest-modal-backdrop" data-close></div>
+    <div class="guest-modal-card">
+      <button type="button" class="guest-modal-close" aria-label="Close" data-close>✕</button>
+      <div id="guest-bottle-detail"></div>
+    </div>
+  </div>
+
+  <!-- Drink-now / sommelier tab -->
+  <div class="guest-pane" data-pane="drinknow" hidden>
+    <h1>Ask the sommelier</h1>
+    <p class="muted">1–3 picks that consider quantity and peak window.</p>
+    <form id="guest-drinknow-form">
+      <label>Notes (optional)<input name="notes" placeholder="e.g. quiet evening, want something thoughtful" /></label>
+      <button type="submit">Suggest tonight's bottle</button>
+    </form>
+    <div id="guest-drinknow-result"></div>
+  </div>
+</section>
