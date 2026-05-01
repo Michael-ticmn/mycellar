@@ -874,26 +874,63 @@ body.guest-mode .topbar .userbox { display: none; }
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 0.75rem;
+  table-layout: fixed;
 }
 .prep-table th, .prep-table td {
   padding: 0.4rem 0.5rem;
   text-align: left;
   vertical-align: middle;
   border-bottom: 1px solid var(--surface-2);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 .prep-table thead th {
   font-size: 0.8rem;
   color: var(--muted);
   font-weight: 500;
 }
-.prep-table input[type="number"] { width: 5rem; }
-.prep-table input[type="text"]   { width: 100%; min-width: 6rem; }
+.prep-table input[type="number"] { width: 100%; max-width: 5rem; }
+.prep-table input[type="text"]   { width: 100%; min-width: 0; }
 .prep-decant {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
   font-size: 0.85rem;
   white-space: nowrap;
+}
+
+/* On narrow screens the 5-column table forces horizontal scroll. Stack
+   each row into a card with cells acting as labelled fields. The header
+   row is hidden; td::before pulls the label out of data-prep-label. */
+@media (max-width: 640px) {
+  .prep-table { display: block; }
+  .prep-table thead { display: none; }
+  .prep-table tbody { display: block; }
+  .prep-table tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem 0.75rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--surface-2);
+  }
+  .prep-table th, .prep-table td {
+    border: 0;
+    padding: 0;
+  }
+  .prep-table th[scope="row"] {
+    grid-column: 1 / -1;
+    font-size: 0.95rem;
+    color: var(--highlight);
+  }
+  .prep-table td::before {
+    content: attr(data-prep-label);
+    display: block;
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 0.15rem;
+  }
+  .prep-table td[data-prep-label="Glass"] { grid-column: 1 / -1; }
+  .prep-table input[type="number"] { max-width: none; }
 }
 .prep-notes-label {
   display: grid;

@@ -98,7 +98,7 @@ Keep the buy suggestion to 2–3 sentences max plus the price range. Don't pad. 
     case 'flight_plan':
       body = `The user has saved a tasting flight (see ## Saved flight) and wants you to plan the evening around it. Produce two things:
 
-1) **Food** — 2–4 specific suggestions that work across the flight. Mark each as either a "meal" (a real plated course) or a "snack" (something to nibble between pours, or while talking before pour 1). Aim for one snack and one or two meal options unless the bottles strongly suggest otherwise. For each item give a short name and a one-sentence description.
+1) **Food** — 3–5 specific suggestions presented as a menu of OPTIONS the user can choose from (not a full multi-course meal to prepare in entirety). Mix meal options and snack options so the user has real choice. Mark each as either a "meal" (a plated course they could build the evening around) or a "snack" (something to nibble between pours or before pour 1). Each item is independent — the user will keep what fits and delete the rest. For each give a short name and a one-sentence description that makes the trade-off clear (heavier vs lighter, fussier vs easier, leans into which bottle, etc.).
 
 2) **Prep** — concrete serving instructions per bottle:
    - chill: minutes in the fridge before pour (0 if it's already at serving temp; omit the line entirely if no chill needed)

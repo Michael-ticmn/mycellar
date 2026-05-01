@@ -1295,7 +1295,7 @@ async function renderPlannedDetail(root, plan) {
   const foodHTML = `<section class="planned-food"><h2>Food</h2>
     ${enrichmentPending
       ? '<p class="muted">Sommelier is preparing food suggestions…</p>'
-      : renderFoodEditor(plan.food || [])}
+      : `<p class="muted food-hint">Options to choose from — keep what you'll serve, edit or delete the rest.</p>${renderFoodEditor(plan.food || [])}`}
   </section>`;
 
   const prepHTML = `<section class="planned-prep"><h2>Preparation</h2>
@@ -1348,10 +1348,10 @@ function renderPrepEditor(prep, bottles) {
     const name = bottle ? `${bottle.producer}${bottle.wine_name ? ' · ' + bottle.wine_name : ''}` : 'Unknown bottle';
     return `<tr data-prep-bottle="${escapeAttr(id)}">
       <th scope="row">${escapeHtml(name)}</th>
-      <td><input type="number" min="0" max="600" step="5" data-prep-field="chill"   value="${escapeAttr(chillBy(id).minutes ?? '')}"  placeholder="min" /></td>
-      <td><input type="number" min="0" max="600" step="5" data-prep-field="open_by" value="${escapeAttr(openByOf(id).minutes ?? '')}" placeholder="min" /></td>
-      <td><label class="prep-decant"><input type="checkbox" data-prep-field="decant" ${decantOf(id) ? 'checked' : ''} /> Decant</label></td>
-      <td><input type="text" data-prep-field="glassware" value="${escapeAttr(glassOf(id).type || '')}" placeholder="e.g. Burgundy" /></td>
+      <td data-prep-label="Chill"><input type="number" min="0" max="600" step="5" data-prep-field="chill"   value="${escapeAttr(chillBy(id).minutes ?? '')}"  placeholder="min" /></td>
+      <td data-prep-label="Open by"><input type="number" min="0" max="600" step="5" data-prep-field="open_by" value="${escapeAttr(openByOf(id).minutes ?? '')}" placeholder="min" /></td>
+      <td data-prep-label="Decant"><label class="prep-decant"><input type="checkbox" data-prep-field="decant" ${decantOf(id) ? 'checked' : ''} /> Decant</label></td>
+      <td data-prep-label="Glass"><input type="text" data-prep-field="glassware" value="${escapeAttr(glassOf(id).type || '')}" placeholder="e.g. Burgundy" /></td>
     </tr>`;
   }).join('');
   return `<table class="prep-table">
@@ -1359,7 +1359,7 @@ function renderPrepEditor(prep, bottles) {
     <tbody>${rows || '<tr><td colspan="5" class="muted">No bottles to prep.</td></tr>'}</tbody>
   </table>
   <label class="prep-notes-label">Other notes
-    <textarea data-prep-field="notes" rows="2" placeholder="Anything else…">${escapeHtml(prep.notes || '')}</textarea>
+    <textarea data-prep-field="notes" rows="6" placeholder="Anything else…">${escapeHtml(prep.notes || '')}</textarea>
   </label>`;
 }
 
