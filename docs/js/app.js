@@ -5,6 +5,8 @@ import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } f
 import {
   listPlannedFlights, getPlannedFlight, createPlannedFlight,
   updatePlannedFlight, deletePlannedFlight, requestFlightPlanEnrichment,
+  attachPlannedFlightToShare, detachPlannedFlightFromShare,
+  requestGuestWalkthrough,
 } from './planned-flights.js';
 import {
   startCamera, stopCamera, captureFrame,
@@ -15,6 +17,7 @@ import {
   resolveShare, listBottlesForShare,
   requestPairingForShare, requestFlightForShare,
   requestFlightExtrasForShare, requestDrinkNowForShare,
+  getSharedPlannedFlight,
 } from './guest.js';
 import { getActiveShareLink, createShareLink, revokeShareLink, shareUrlFor } from './share.js';
 
@@ -218,6 +221,25 @@ async function mountGuest(token) {
   // would fail — recommendations look up by id from this map instead.
   const bottleById = new Map(bottles.map((b) => [b.id, b]));
 
+  // Tonight tab — only surfaces when the host has attached a planned
+  // flight to this share link. If a plan is attached we make Tonight
+  // the default tab so guests land directly on the evening's guide.
+  let tonightPlan = null;
+  try { tonightPlan = await getSharedPlannedFlight(token); }
+  catch { /* RPC failed — silently skip the Tonight tab */ }
+  if (tonightPlan) {
+    const tonightTab  = $('.guest-tab[data-tab="tonight"]', tabs);
+    const tonightPane = $('.guest-pane[data-pane="tonight"]');
+    const cellarTab   = $('.guest-tab[data-tab="cellar"]', tabs);
+    if (tonightTab)  tonightTab.hidden = false;
+    if (tonightPane) tonightPane.hidden = false;
+    if (cellarTab)   cellarTab.classList.remove('active');
+    if (tonightTab)  tonightTab.classList.add('active');
+    // Hide non-Tonight panes by default until the user clicks another tab.
+    $$('.guest-pane').forEach((p) => { p.hidden = p.dataset.pane !== 'tonight'; });
+    renderTonightPane($('#guest-tonight-root'), tonightPlan);
+  }
+
   // Modal close (backdrop or ✕)
   $$('#guest-bottle-modal [data-close]').forEach((el) => {
     el.addEventListener('click', () => { $('#guest-bottle-modal').hidden = true; });
@@ -369,6 +391,88 @@ function wireGuestBottleClicks(root, bottleById) {
       if (b) showGuestBottleDetail(b);
     });
   });
+}
+
+// Render the Tonight tab — read-only walkthrough for guests of a saved
+// planned flight. Falls back to plan.narrative when guest_view hasn't
+// been generated yet so the page still works pre-walkthrough.
+function renderTonightPane(root, plan) {
+  if (!root || !plan) return;
+  const bottles  = Array.isArray(plan.bottles) ? plan.bottles : [];
+  const bottleById = new Map(bottles.map((b) => [b.id, b]));
+  const picks    = Array.isArray(plan.picks)   ? plan.picks   : [];
+  const food     = Array.isArray(plan.food)    ? plan.food    : [];
+  const gv       = plan.guest_view || null;
+  const intro    = (gv && gv.guest_intro) || plan.narrative || '';
+  const walk     = (gv && Array.isArray(gv.pour_walkthrough)) ? gv.pour_walkthrough : [];
+  const walkById = new Map(walk.filter((w) => w?.bottle_id).map((w) => [w.bottle_id, w]));
+
+  const date = plan.occasion_date
+    ? new Date(plan.occasion_date + 'T00:00:00').toLocaleDateString('en-US',
+        { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+    : '';
+
+  const headerHTML = `<header class="guest-tonight-head">
+    <h1>${escapeHtml(plan.title || "Tonight's flight")}</h1>
+    ${date ? `<p class="muted">${escapeHtml(date)}</p>` : ''}
+  </header>`;
+
+  const introHTML = intro
+    ? narrativeBlockHTML(intro, { heading: 'Welcome', headingTag: 'h2' })
+    : '';
+
+  const foodHTML = food.length ? `<section class="guest-tonight-food">
+    <h2>On the table</h2>
+    <ul class="guest-food-list">
+      ${food.map((f) => `<li>
+        <span class="guest-food-kind">${escapeHtml(f.kind || 'meal')}</span>
+        <strong>${escapeHtml(f.name || '')}</strong>
+        ${f.description ? `<span class="muted"> — ${escapeHtml(f.description)}</span>` : ''}
+      </li>`).join('')}
+    </ul>
+  </section>` : '';
+
+  const whenLabel = (when) => {
+    const w = (when || '').toLowerCase();
+    if (w === 'before') return 'Before this pour';
+    if (w === 'after')  return 'After this pour';
+    return 'During this pour';
+  };
+
+  const poursHTML = picks.length ? `<section class="guest-tonight-pours">
+    <h2>The pours</h2>
+    ${picks.map((pick, i) => {
+      const bottle = bottleById.get(pick.bottle_id);
+      const w      = walkById.get(pick.bottle_id);
+      const num    = i + 1;
+      const sub    = bottle ? [bottle.varietal, bottle.vintage, bottle.region, bottle.country].filter(Boolean).map(escapeHtml).join(' · ') : '';
+      const title  = bottle ? `${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}` : `<span class="muted">Unknown bottle</span>`;
+      const lookFor = w?.what_to_look_for
+        ? `<p class="pour-look">${escapeHtml(w.what_to_look_for)}</p>`
+        : (pick.reasoning ? `<p class="pour-look muted">${escapeHtml(pick.reasoning)}</p>` : '');
+      const cue = (w?.food_cue && w.food_cue.toLowerCase() !== 'none')
+        ? `<p class="food-cue-chip"><span class="food-cue-when">${escapeHtml(whenLabel(w.food_when))}</span> · ${escapeHtml(w.food_cue)}</p>`
+        : '';
+      const transition = w?.transition
+        ? `<p class="pour-transition">${escapeHtml(w.transition)}</p>`
+        : '';
+      return `<article class="pour-block" data-style="${escapeAttr(bottle?.style || '')}">
+        <div class="pour-num">Pour ${num}</div>
+        <h3>${title}</h3>
+        ${sub ? `<p class="muted">${sub}</p>` : ''}
+        ${lookFor}
+        ${cue}
+        ${transition}
+      </article>`;
+    }).join('')}
+  </section>` : '';
+
+  root.innerHTML = `<div class="guest-plan-tonight">
+    ${headerHTML}
+    ${introHTML}
+    ${foodHTML}
+    ${poursHTML}
+  </div>`;
 }
 
 function showGuestBottleDetail(b) {
@@ -1308,15 +1412,131 @@ async function renderPlannedDetail(root, plan) {
     <textarea data-field="user_notes" rows="3" placeholder="Anything else for the night…">${escapeHtml(plan.user_notes || '')}</textarea>
   </section>`;
 
+  const guestSectionHTML = `<section class="planned-guest" data-guest-section>
+    <h2>Guest view</h2>
+    <div data-guest-body><p class="muted">Loading guest-link status…</p></div>
+  </section>`;
+
   const actionsHTML = `<section class="planned-actions">
     <button type="button" class="ghost" data-action="reask"${enrichmentPending ? ' disabled' : ''}>Re-ask the sommelier</button>
     <button type="button" class="ghost" data-action="delete">Delete this plan</button>
     <p class="error planned-error" hidden></p>
   </section>`;
 
-  root.innerHTML = headerHTML + narrativeHTML + picksHTML + foodHTML + prepHTML + notesHTML + actionsHTML;
+  root.innerHTML = headerHTML + narrativeHTML + picksHTML + foodHTML + prepHTML + notesHTML + guestSectionHTML + actionsHTML;
 
   wirePlannedDetail(root, plan);
+  renderPlannedGuestSection(root, plan);
+}
+
+// Owner-side guest-link controls inside the planned flight detail page.
+// Three states: no active share link (nudge to /share), link exists but
+// nothing attached (offer to attach), already attached (offer to detach,
+// generate/re-generate the walkthrough, or copy the URL).
+async function renderPlannedGuestSection(root, plan) {
+  const body = $('[data-guest-body]', root);
+  if (!body) return;
+
+  let link;
+  try { link = await getActiveShareLink(); }
+  catch (e) {
+    body.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
+    return;
+  }
+
+  if (!link) {
+    body.innerHTML = `<p class="muted">Create a guest link in the
+      <a href="#/share">Share view</a> first, then come back here to show
+      this plan to your guests.</p>`;
+    return;
+  }
+
+  const expiresAt = new Date(link.expires_at);
+  const expiresLabel = expiresAt.toLocaleString('en-US',
+    { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+  const attached = plan.shared_via_link_id === link.id;
+  const wrongLink = !attached && plan.shared_via_link_id != null;
+  const shareUrl = shareUrlFor(link.token);
+  const hasWalkthrough = plan.guest_view && (plan.guest_view.guest_intro || plan.guest_view.pour_walkthrough);
+
+  if (wrongLink) {
+    // The plan is attached to a different (revoked/expired) link. Treat
+    // as detached; offer a clean re-attach to the current active link.
+    body.innerHTML = `<p class="muted">This plan was attached to a previous share link that's no longer active.</p>
+      <button type="button" data-guest-action="attach">Show on current guest link</button>
+      <p class="error planned-guest-error" hidden></p>`;
+  } else if (!attached) {
+    body.innerHTML = `<p class="muted">Show this plan to anyone with your active guest link (<code>${escapeHtml(shareUrl)}</code> · expires ${escapeHtml(expiresLabel)}).</p>
+      <button type="button" data-guest-action="attach">Show this plan to guests</button>
+      <p class="error planned-guest-error" hidden></p>`;
+  } else {
+    const walkthroughBtn = hasWalkthrough
+      ? `<button type="button" class="ghost" data-guest-action="walkthrough">Re-generate walkthrough</button>`
+      : `<button type="button" data-guest-action="walkthrough">Generate guest walkthrough</button>`;
+    const status = hasWalkthrough
+      ? `<p class="muted">Visible to guests until ${escapeHtml(expiresLabel)} — walkthrough ready.</p>`
+      : `<p class="muted">Visible to guests until ${escapeHtml(expiresLabel)} — guests will see the original narrative until you generate the walkthrough.</p>`;
+    body.innerHTML = `${status}
+      <p class="planned-guest-url"><a href="${escapeAttr(shareUrl)}" target="_blank" rel="noopener">Open guest view ↗</a></p>
+      <div class="planned-guest-actions">
+        ${walkthroughBtn}
+        <button type="button" class="ghost" data-guest-action="detach">Hide from guests</button>
+      </div>
+      <p class="error planned-guest-error" hidden></p>`;
+  }
+
+  wirePlannedGuestSection(root, plan, link);
+}
+
+function wirePlannedGuestSection(root, plan, link) {
+  const body = $('[data-guest-body]', root);
+  if (!body) return;
+  const errEl = $('.planned-guest-error', body);
+  const showErr = (msg) => {
+    if (!errEl) return;
+    errEl.hidden = !msg;
+    errEl.textContent = msg || '';
+  };
+  const refresh = async () => {
+    const fresh = await getPlannedFlight(plan.id);
+    if (fresh) await renderPlannedGuestSection(root, fresh);
+  };
+
+  $('[data-guest-action="attach"]', body)?.addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    try { await attachPlannedFlightToShare(plan.id, link.id); await refresh(); }
+    catch (err) {
+      e.currentTarget.disabled = false;
+      const msg = /unique/i.test(err.message)
+        ? 'Another planned flight is already attached to your active share link — detach it first.'
+        : err.message;
+      showErr(msg);
+    }
+  });
+
+  $('[data-guest-action="detach"]', body)?.addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    try { await detachPlannedFlightFromShare(plan.id); await refresh(); }
+    catch (err) { e.currentTarget.disabled = false; showErr(err.message); }
+  });
+
+  $('[data-guest-action="walkthrough"]', body)?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Sommelier is writing the walkthrough…';
+    showErr('');
+    try {
+      const fresh = await getPlannedFlight(plan.id);
+      await requestGuestWalkthrough(fresh);
+      await refresh();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = original;
+      showErr(err.message);
+    }
+  });
 }
 
 function renderFoodEditor(food) {

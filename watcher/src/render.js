@@ -54,9 +54,10 @@ function bottlesTable(snapshot, includeQty = true) {
 }
 
 function expectedCount(type) {
-  if (type === 'pairing')     return '1-2';
-  if (type === 'flight')      return '3-5';
-  if (type === 'flight_plan') return '0';
+  if (type === 'pairing')      return '1-2';
+  if (type === 'flight')       return '3-5';
+  if (type === 'flight_plan')  return '0';
+  if (type === 'flight_guest') return '0';
   return '1-3';
 }
 
@@ -108,6 +109,20 @@ Keep the buy suggestion to 2–3 sentences max plus the price range. Don't pad. 
    Plus a "notes" field with anything else (order of service if non-obvious, palate-cleanser, when to pour the snack, etc.).
 
 Use the picks from ## Saved flight — do NOT recommend other bottles. The Recommendations array in the response stays empty.`;
+      break;
+    case 'flight_guest':
+      body = `The host has finalized a tasting flight and wants you to write the GUEST-FACING walkthrough — copy the guests will read on a shared link tonight. The host has already settled on the bottles and the food (both shown in ## Saved flight). Produce:
+
+1) **guest_intro** — 2–3 sentences welcoming the guest and framing the evening. Tell them what's coming (a vertical, a regional tour, a varietal comparison, etc.) and what to pay attention to. Warm but specific. Skip any "tonight on this special evening" filler — just say what the flight is.
+
+2) **pour_walkthrough** — one entry per bottle from ## Saved flight, IN THE EXACT ORDER GIVEN. Each entry:
+   - bottle_id: the uuid from the picks table.
+   - what_to_look_for: 1–2 sentences on color, aroma, and palate cues a guest should notice. Plain language, not jargon-stacked. If a comparison to the previous pour is the point, name it.
+   - food_cue: which kept food item to enjoy with this pour (use the food name from ## Kept food). Use "none" only if no food fits — don't invent a dish.
+   - food_when: literally "before", "during", or "after" — when in the pour the food works best (before the first sip / sipped together / after the wine to reset the palate).
+   - transition: 1 sentence on how to move to the next pour — palate cleanse, what shifts, what to listen for in the next glass. For the LAST pour, write a brief closing line instead (no "next pour").
+
+Voice: speak directly to the guest ("you'll notice…", "try a bite of the…"). Don't address the host. Don't talk about chill times, decanting, or glassware — that's host-side prep, not guest-facing. The Recommendations array stays empty; everything goes in the ## Plan JSON.`;
       break;
     default:
       return `Unrecognized request_type: ${type}.`;
@@ -183,6 +198,65 @@ _(optional — short paragraph framing the night, or omit entirely)_
 `;
   }
 
+  // flight_guest is also picks-already-chosen, but additionally has the
+  // host's kept food list as input. The response is just the guest-facing
+  // walkthrough JSON — no recommendations, no narrative.
+  if (row.request_type === 'flight_guest') {
+    const savedFlightSection = renderSavedFlightSection(row.context || {});
+    const keptFoodSection    = renderKeptFoodSection(row.context || {});
+    return `${fm}
+
+# cellar27 request
+
+## Today
+${todaySection(weather)}
+
+## Context
+\`\`\`json
+${contextStr}
+\`\`\`
+
+${savedFlightSection}
+
+${keptFoodSection}
+
+## Task
+${taskFor(row.request_type, row.context)}
+
+## Response format
+Write the response file at the path in \`respond_to\` with this structure:
+
+\`\`\`markdown
+---
+request_id: ${row.id}
+completed: <ISO timestamp>
+---
+
+## Recommendations
+_(empty for flight_guest)_
+
+## Plan
+\`\`\`json
+{
+  "guest_intro": "Welcome — tonight you'll taste …",
+  "pour_walkthrough": [
+    {
+      "bottle_id": "<uuid from Saved flight, in serve order>",
+      "what_to_look_for": "Color, aroma, palate cues …",
+      "food_cue": "<food name from Kept food, or \\"none\\">",
+      "food_when": "before|during|after",
+      "transition": "How to move to the next pour …"
+    }
+  ]
+}
+\`\`\`
+
+## Narrative
+_(omit — the guest_intro field above carries the welcome)_
+\`\`\`
+`;
+  }
+
   return `${fm}
 
 # cellar27 request
@@ -250,6 +324,28 @@ ${head}
 ${sep}
 ${rows}
 ${narrative}`;
+}
+
+// Render the host's curated food list for flight_guest. The walkthrough's
+// food_cue must reference one of these names verbatim (or "none") so the
+// guest UI can match it back to a saved item.
+function renderKeptFoodSection(ctx) {
+  const food = Array.isArray(ctx.food) ? ctx.food : [];
+  if (!food.length) {
+    return `## Kept food
+_(none — the host hasn't kept any food items. Use "none" for every food_cue.)_`;
+  }
+  const head = '| kind | name | description |';
+  const sep  = '|------|------|-------------|';
+  const rows = food.map((f) => {
+    const name = (f.name || '').replace(/\|/g, '\\|');
+    const desc = (f.description || '').replace(/\|/g, '\\|').replace(/\n+/g, ' ');
+    return `| ${f.kind || ''} | ${name} | ${desc} |`;
+  }).join('\n');
+  return `## Kept food
+${head}
+${sep}
+${rows}`;
 }
 
 // images: array of { label: 'front'|'back'|..., path: '<absolute local path>' }

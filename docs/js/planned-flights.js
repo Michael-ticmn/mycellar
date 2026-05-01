@@ -78,3 +78,42 @@ export async function requestFlightPlanEnrichment(plan) {
   if (Object.keys(patch).length) await updatePlannedFlight(plan.id, patch);
   return { request: req, response, patch };
 }
+
+// Attach this planned flight to the owner's currently-active share link
+// so guests visiting #/guest/<token> see the Tonight tab. The unique
+// index on planned_flights.shared_via_link_id enforces one-plan-per-link;
+// surface that error legibly if it trips.
+export async function attachPlannedFlightToShare(planId, shareLinkId) {
+  return updatePlannedFlight(planId, { shared_via_link_id: shareLinkId });
+}
+
+export async function detachPlannedFlightFromShare(planId) {
+  return updatePlannedFlight(planId, { shared_via_link_id: null });
+}
+
+// Fire a flight_guest AI request to generate the guest-facing walkthrough
+// (intro + per-pour blocks). Runs as the owner — does NOT count against
+// the share-link AI quota. Includes only the kept food so the model
+// doesn't reference items the user deleted.
+export async function requestGuestWalkthrough(plan) {
+  const req = await createRequest({
+    requestType: 'flight_guest',
+    includeCellar: false,
+    context: {
+      planned_flight_id: plan.id,
+      title: plan.title,
+      occasion_date: plan.occasion_date,
+      theme: plan.theme,
+      guests: plan.guests,
+      narrative: plan.narrative,
+      picks: plan.picks,
+      food: Array.isArray(plan.food) ? plan.food : [],
+    },
+  });
+  const response = await waitForResponse(req.id);
+  const payload = response.payload || null;
+  if (payload && (payload.guest_intro || payload.pour_walkthrough)) {
+    await updatePlannedFlight(plan.id, { guest_view: payload });
+  }
+  return { request: req, response, payload };
+}

@@ -4,11 +4,17 @@
   </div>
 
   <nav class="guest-tabs" id="guest-tabs" role="tablist" hidden>
+    <button class="guest-tab"        data-tab="tonight"  role="tab" hidden>Tonight</button>
     <button class="guest-tab active" data-tab="cellar"   role="tab">Cellar</button>
     <button class="guest-tab"        data-tab="pair"     role="tab">Pair</button>
     <button class="guest-tab"        data-tab="flight"   role="tab">Flight</button>
     <button class="guest-tab"        data-tab="drinknow" role="tab">Sommelier</button>
   </nav>
+
+  <!-- Tonight tab — populated only when the host has attached a planned flight -->
+  <div class="guest-pane" data-pane="tonight" hidden>
+    <div id="guest-tonight-root"></div>
+  </div>
 
   <!-- Cellar tab -->
   <div class="guest-pane" data-pane="cellar">

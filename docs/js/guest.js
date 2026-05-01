@@ -16,6 +16,15 @@ export async function listBottlesForShare(token) {
   return data || [];
 }
 
+// Returns the planned flight currently attached to this token's share
+// link, with sanitized bottle metadata for each pick — or null if the
+// owner hasn't attached a plan yet. RPC is SECURITY DEFINER (anon-safe).
+export async function getSharedPlannedFlight(token) {
+  const { data, error } = await sb.rpc('cellar27_share_get_planned_flight', { p_token: token });
+  if (error) throw new Error(prettyShareError(error));
+  return data || null;
+}
+
 // Anon clients can't subscribe to RLS-protected tables via Realtime; poll the
 // SECURITY DEFINER reader instead. Mirrors the timeout shape of waitForResponse
 // in pairings.js (5 min cap).

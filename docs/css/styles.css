@@ -996,3 +996,111 @@ body.guest-mode .topbar .userbox { display: none; }
   align-items: center;
 }
 .planned-error { margin: 0 0 0 auto; }
+
+/* ──────────── Planned-flight guest controls (owner side) ──────────── */
+.planned-guest {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-top: 1.5rem;
+  display: grid;
+  gap: 0.5rem;
+}
+.planned-guest h2 { margin: 0; }
+.planned-guest code {
+  font-size: 0.8rem;
+  background: var(--bg);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  word-break: break-all;
+}
+.planned-guest-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.planned-guest-url a { color: var(--highlight); }
+
+/* ──────────── Guest "Tonight" tab (read-only) ──────────── */
+.guest-plan-tonight { display: grid; gap: 1.5rem; }
+.guest-tonight-head h1 { font-size: 1.6rem; margin: 0; color: var(--highlight); }
+.guest-tonight-head .muted { margin: 0.25rem 0 0; }
+
+.guest-tonight-food .guest-food-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.guest-food-list li {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.75rem;
+}
+.guest-food-kind {
+  display: inline-block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 0.5rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--highlight);
+}
+
+.guest-tonight-pours {
+  display: grid;
+  gap: 1rem;
+}
+.pour-block {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  display: grid;
+  gap: 0.5rem;
+  position: relative;
+}
+.pour-block .pour-num {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.pour-block h3 { font-size: 1.15rem; margin: 0; }
+.pour-block .muted { margin: 0; }
+.pour-look { margin: 0.25rem 0 0; }
+.food-cue-chip {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border-left: 3px solid var(--accent-2);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.95rem;
+}
+.food-cue-when {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--highlight);
+  font-weight: 600;
+}
+.pour-transition {
+  margin: 0.75rem 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--surface-2);
+  color: var(--muted);
+  font-style: italic;
+  font-size: 0.95rem;
+}
+
+/* Wine-color tinted left edge per pour block, mirroring bottle-card. */
+.pour-block[data-style="light_red"]    { border-left: 4px solid #c45050; }
+.pour-block[data-style="medium_red"]   { border-left: 4px solid #8b1a1a; }
+.pour-block[data-style="full_red"]     { border-left: 4px solid #5a1212; }
+.pour-block[data-style="light_white"]  { border-left: 4px solid #d4cc88; }
+.pour-block[data-style="full_white"]   { border-left: 4px solid #b89858; }
+.pour-block[data-style="rose"]         { border-left: 4px solid #d07878; }
+.pour-block[data-style="sparkling"]    { border-left: 4px solid #d8c878; }
+.pour-block[data-style="dessert"]      { border-left: 4px solid #a8682a; }
+.pour-block[data-style="fortified"]    { border-left: 4px solid #8a3818; }
