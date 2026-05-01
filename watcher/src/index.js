@@ -303,8 +303,7 @@ function watchResponses() {
     }
   });
   watcher.on('error', (e) => {
-    err(`FATAL: chokidar watcher error: ${e?.message || e}; exiting for supervisor restart`);
-    process.exit(1);
+    fatalAndExit('chokidar', e?.stack || e?.message || String(e));
   });
   responsesWatcher = watcher;
 }
@@ -431,13 +430,50 @@ async function shutdown(signal) {
 process.on('SIGINT',  () => { shutdown('SIGINT').catch(()  => process.exit(1)); });
 process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)); });
 
-// Fail-fast on unhandled rejections: continuing in possibly-corrupted state
-// is worse than restarting under the supervisor.
-process.on('unhandledRejection', (reason) => {
-  err('FATAL unhandledRejection:', reason);
+// Fail-fast on unhandled rejections / uncaught exceptions / fatal chokidar
+// errors. These reflect bugs (or filesystem disappearance), not transient
+// network drops — continuing in a corrupted state is worse than dying.
+//
+// BUT: the watcher runs as a detached node.exe with no supervisor, so a
+// silent exit would leave it dead until the owner notices (which happened
+// on 2026-05-01 — a real morning request stuck in pending). Email via the
+// existing notify() SMTP path before exiting so the owner finds out at the
+// moment of death rather than when they next try to use the app.
+async function fatalAndExit(reason, body) {
+  err(`FATAL ${reason}:`, body);
+  // Race the email against a 5-second timeout — don't let a hung SMTP
+  // server keep us alive in a broken state. notify() has its own per-key
+  // cooldown so a flapping process doesn't spam the inbox.
+  try {
+    await Promise.race([
+      notify({
+        key: `watcher-fatal:${reason}`,
+        subject: `cellar27 watcher died (${reason}) on ${HOST}`,
+        body: [
+          `The cellar27 watcher on ${HOST} hit a fatal error and exited.`,
+          ``,
+          `Reason: ${reason}`,
+          `Time:   ${new Date().toISOString()}`,
+          ``,
+          `Detail:`,
+          String(body).slice(0, 3000),
+          ``,
+          `Restart procedure: see watcher/README.md "Where it runs". Until`,
+          `restart, any new pair / scan request from the phone will sit in`,
+          `status='pending' and the user will see a spinner.`,
+        ].join('\n'),
+      }),
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ]);
+  } catch (e) {
+    err('notify (fatal path) failed:', e?.message || e);
+  }
   process.exit(1);
+}
+
+process.on('unhandledRejection', (reason) => {
+  fatalAndExit('unhandledRejection', reason?.stack || String(reason));
 });
 process.on('uncaughtException', (e) => {
-  err('FATAL uncaughtException:', e);
-  process.exit(1);
+  fatalAndExit('uncaughtException', e?.stack || String(e));
 });

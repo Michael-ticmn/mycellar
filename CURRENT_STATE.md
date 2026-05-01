@@ -22,6 +22,9 @@
 - End-to-end pair, flight, drink-now, scan-add, scan-pour, manual-add — all working from phone PWA.
 - **Guest sharing** (`#/share`): owner generates a short-lived, mobile-friendly link with a QR. Guests browse the cellar and run pair / flight / ask-sommelier without an account; price / notes / storage / label fields are stripped server-side. Per-link AI budget (independent of the owner's 100/hr quota), owner-picks-TTL at creation, one active link at a time, generating a new link revokes the prior. SECURITY DEFINER RPCs over an `anon` client; RLS on `bottles` and `pairing_requests` untouched.
 
+**Recently shipped (2026-05-01 — watcher self-death email):**
+- The three remaining fail-fast paths (`unhandledRejection`, `uncaughtException`, fatal chokidar) now email via the existing SMTP `notify()` before exiting, so the next watcher death is observable in the inbox at the moment it happens (5s SMTP timeout so a hung mail server can't block exit; 30-min per-reason cooldown to prevent flooding).
+
 **Recently shipped (2026-05-01 — watcher reconnect + DEP0190):**
 - Watcher: in-process exponential-backoff reconnect on Supabase realtime drop (replaces v0.9.0's fail-fast which assumed a supervisor — there isn't one). Sweeps that channel's table on re-`SUBSCRIBED` to catch INSERTs missed during the dead window. `uncaughtException`/`unhandledRejection` keep fail-fast (bug signatures, not network signatures).
 - Watcher: explicit PATH-based binary resolution in [`watcher/src/agent.js`](watcher/src/agent.js) so we can drop `shell:true` on the `spawn()` call. Clears the Node DEP0190 deprecation warning.

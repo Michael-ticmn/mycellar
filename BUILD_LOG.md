@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-05-01 (late morning) — watcher: self-death email path
+
+### Built
+
+Follow-up to today's earlier reconnect fix. Realtime drops are now handled in-process (so they don't kill the watcher), but the three remaining fatal paths — `unhandledRejection`, `uncaughtException`, fatal chokidar `error` — still call `process.exit(1)` because they reflect real bugs / filesystem disappearance, not transient network issues. The watcher runs as a detached `node.exe` with no supervisor, so those silent exits would leave the user discovering the problem only when their next phone request hangs (which is exactly what happened this morning before the reconnect fix).
+
+**watcher/src/index.js** — new `fatalAndExit(reason, body)` helper
+- Logs the FATAL line as before, then calls the existing [`notify()`](watcher/src/notify.js) SMTP path with subject `cellar27 watcher died (<reason>) on <hostname>` and a body containing the reason, timestamp, error detail (truncated to 3KB), and a pointer to the restart procedure.
+- Wrapped in `Promise.race(notify, setTimeout(5000))` so a hung SMTP server can't keep the watcher alive in a corrupted state — 5 seconds is enough for any responsive SMTP, and if it's not, exit anyway.
+- `notify()`'s per-key cooldown (default 30 min, configurable via `NOTIFY_COOLDOWN_MS`) prevents a flapping process from spamming the inbox.
+- The three handlers (`unhandledRejection`, `uncaughtException`, chokidar `error`) all route through the helper; logged reason comes from the constructor name so each gets its own cooldown bucket.
+
+### Decisions
+- **Reuse the existing `notify()` infrastructure rather than write a separate path**: the SMTP credentials, cooldown logic, and Gmail App Password setup are already wired and proven via the existing limit-hit notifications. Adding a parallel path would duplicate config without adding capability.
+- **5-second SMTP timeout**: long enough that a healthy SMTP responds, short enough that a dead one doesn't make the failure mode "watcher seems frozen" instead of "watcher died visibly."
+- **Per-reason cooldown key**: `watcher-fatal:unhandledRejection` and `watcher-fatal:chokidar` are separate buckets, so two genuinely-different fatal events within the cooldown window each get an email.
+- **Skipped a weekly cloud routine option**: the user originally asked for one, but a remote agent has zero access to local watcher logs (gitignored, never reach the GitHub repo). The "watcher emails on its own death" approach is strictly better — instant signal vs ≤7-day signal, no routine slot consumed, no false-clear when the cloud agent finds nothing in a missing log.
+
+### Validation
+- Watcher restarted; both channels `SUBSCRIBED` cleanly; no DEP0190 in stderr; idle. Real test path is unfortunately "wait for the next genuine fatal" — no clean way to provoke an `unhandledRejection` for verification without hacking the source temporarily.
+
+### No version bump
+- Watcher-only change. PWA `version.js` stays at 0.9.6.
+
+---
+
 ## 2026-05-01 (morning) — watcher: realtime reconnect + DEP0190 fix
 
 ### Built
