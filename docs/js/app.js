@@ -240,8 +240,7 @@ async function mountGuest(token) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     const out = $('#guest-pair-result');
-    setBusy(out, 'Asking the sommelier… (up to a couple of minutes)');
-    try {
+    await withBusySubmit(e.currentTarget, out, 'Asking the sommelier… (up to a couple of minutes)', async () => {
       const { response } = await requestPairingForShare(token, {
         dish: fd.get('dish').trim(),
         guests: numOrNull(fd.get('guests')) ?? 2,
@@ -249,7 +248,7 @@ async function mountGuest(token) {
         constraints: fd.get('constraints')?.trim() || null,
       });
       await renderGuestRecommendations(out, response, bottleById);
-    } catch (err) { out.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+    });
     refreshQuota();
   });
 
@@ -258,15 +257,14 @@ async function mountGuest(token) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     const out = $('#guest-flight-result');
-    setBusy(out, 'Building the flight…');
-    try {
+    await withBusySubmit(e.currentTarget, out, 'Building the flight…', async () => {
       const { response } = await requestFlightForShare(token, {
         theme: fd.get('theme'),
         guests: numOrNull(fd.get('guests')) ?? 4,
         length: numOrNull(fd.get('length')) ?? 3,
       });
       await renderGuestRecommendations(out, response, bottleById);
-    } catch (err) { out.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+    });
     refreshQuota();
   });
 
@@ -275,11 +273,10 @@ async function mountGuest(token) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     const out = $('#guest-drinknow-result');
-    setBusy(out, 'Asking the sommelier…');
-    try {
+    await withBusySubmit(e.currentTarget, out, 'Asking the sommelier…', async () => {
       const { response } = await requestDrinkNowForShare(token, { notes: fd.get('notes')?.trim() || null });
       await renderGuestRecommendations(out, response, bottleById);
-    } catch (err) { out.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+    });
     refreshQuota();
   });
 
@@ -735,6 +732,24 @@ function pourLoaderHTML(msg = '') {
 function setBusy(resultEl, msg) {
   resultEl.innerHTML = pourLoaderHTML(msg);
 }
+
+// Wraps an async submit handler so the form's submit button is disabled
+// for the duration of the request — prevents button-mashing during the
+// 30–90s Claude wait that would otherwise fire parallel requests, blow
+// past the in-flight cap, and burn the daily Claude budget. Also owns
+// the standard error-rendering pattern so the call sites stay tight.
+async function withBusySubmit(form, resultEl, msg, fn) {
+  const submitBtn = form.querySelector('button[type="submit"], button:not([type])');
+  if (submitBtn) submitBtn.disabled = true;
+  setBusy(resultEl, msg);
+  try {
+    await fn();
+  } catch (err) {
+    resultEl.innerHTML = `<p class="error">${escapeHtml(err?.message || String(err))}</p>`;
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
 async function renderRecommendations(resultEl, response) {
   const recs = Array.isArray(response.recommendations) ? response.recommendations : [];
   const cards = await Promise.all(recs.map(async (r) => {
@@ -969,8 +984,7 @@ function mountPairing() {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    setBusy(result, 'Asking your sommelier… (up to a couple of minutes)');
-    try {
+    await withBusySubmit(form, result, 'Asking your sommelier… (up to a couple of minutes)', async () => {
       const { response } = await requestPairing({
         dish: fd.get('dish').trim(),
         guests: numOrNull(fd.get('guests')) ?? 2,
@@ -978,7 +992,7 @@ function mountPairing() {
         constraints: fd.get('constraints')?.trim() || null,
       });
       await renderRecommendations(result, response);
-    } catch (err) { result.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+    });
   });
 }
 
@@ -989,15 +1003,14 @@ function mountFlight() {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
-      setBusy(result, 'Building the flight… (this may take a couple of minutes)');
-      try {
+      await withBusySubmit(form, result, 'Building the flight… (this may take a couple of minutes)', async () => {
         const { response } = await requestFlight({
           theme: fd.get('theme'),
           guests: numOrNull(fd.get('guests')) ?? 4,
           length: numOrNull(fd.get('length')) ?? 3,
         });
         await renderRecommendations(result, response);
-      } catch (err) { result.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+      });
     });
   }
   const extrasForm = $('#flight-extras-form');
@@ -1006,8 +1019,7 @@ function mountFlight() {
     extrasForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(extrasForm);
-      setBusy(extrasResult, 'Asking your sommelier what to add…');
-      try {
+      await withBusySubmit(extrasForm, extrasResult, 'Asking your sommelier what to add…', async () => {
         const { response } = await requestFlightExtras({
           themeHint: fd.get('theme_hint')?.trim() || null,
         });
@@ -1015,7 +1027,7 @@ function mountFlight() {
         extrasResult.innerHTML = response.narrative
           ? narrativeBlockHTML(response.narrative, { heading: 'Suggestions', headingTag: 'h3' })
           : '<p class="muted">(no suggestions)</p>';
-      } catch (err) { extrasResult.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+      });
     });
   }
 }
@@ -1028,11 +1040,10 @@ async function mountDrinkNow() {
     dnForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(dnForm);
-      setBusy(dnResult, 'Asking your sommelier…');
-      try {
+      await withBusySubmit(dnForm, dnResult, 'Asking your sommelier…', async () => {
         const { response } = await requestDrinkNow({ notes: fd.get('notes')?.trim() || null });
         await renderRecommendations(dnResult, response);
-      } catch (err) { dnResult.innerHTML = `<p class="error">${escapeHtml(err.message)}</p>`; }
+      });
     });
   }
   const root = $('#drink-now-list');
