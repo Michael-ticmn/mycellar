@@ -4,6 +4,52 @@
 
 ---
 
+## 2026-05-02 — guest plan polish + guest → host channel (v0.10.1 → v0.11.0)
+
+### Built
+
+**Guest plan polish (v0.10.1 → v0.10.3):** Phone testing of the new guest plan view surfaced three things that needed fixing or filling in before the surface felt finished.
+
+- **v0.10.1**: `.guest-modal-card` referenced `var(--surface-1)` which is never defined (only `--surface` exists in [`docs/css/styles.css`](docs/css/styles.css) `:root`). The card rendered transparent so the cellar list bled through the bottle-detail text. Switched to `var(--surface)` and added a soft `box-shadow: 0 20px 60px rgba(0,0,0,0.6)` so the card lifts off the backdrop on phones.
+- **v0.10.2**: two pieces in one push.
+  - **Richer guest bottle modal**: amended migration 0013 (still pending owner application at the time) to widen `cellar27_share_list_bottles` with the `details jsonb` column (re-create with explicit `DROP FUNCTION IF EXISTS` because Postgres rejects `CREATE OR REPLACE` when the return type changes — caught by the owner on first apply, fixed in a follow-up commit). Also added `'details', b.details` to the `cellar27_share_get_planned_flight` jsonb projection. Guest modal in `showGuestBottleDetail` now appends a `<section class="narrative-block guest-bottle-details">` rendering through the same `renderDetailsHTML()` helper the owner uses (tasting notes / food pairings / producer / region / drinking-window / serving), with a read-aloud button via `speakBtnHTML()`.
+  - **Flight food + notes**: added two optional fields to [`docs/views/flight.html`](docs/views/flight.html) — *Food we'll be eating* and *Other notes for the sommelier*. Threaded through `requestFlight` ([`docs/js/pairings.js`](docs/js/pairings.js)) and the planned-flight save context. Watcher's `flight` task body in [`watcher/src/render.js`](watcher/src/render.js) now appends a "Food being served: X" line and a "Host notes: Y" line when present, and instructs the model to weight pick choice/ordering toward the food (or contrast it deliberately) and to honor host notes (e.g. "avoid heavy reds", "lean to bottles aged a year+").
+- **v0.10.3**: parity follow-through — same Food + Notes inputs added to the guest-side flight builder ([`docs/views/guest.html`](docs/views/guest.html), `requestFlightForShare` in [`docs/js/guest.js`](docs/js/guest.js), guest flight handler in `mountGuest`). Watcher needed no change (the `flight` task body honors `ctx.food`/`ctx.notes` regardless of who created the request).
+
+**Guest → host channel (v0.11.0):** Closed the loop the other direction. Until now everything a guest did on the share link stayed trapped on their device — host had no signal that anyone was even using it.
+
+- New SQL migration [`supabase/migrations/0014_guest_messages.sql`](supabase/migrations/0014_guest_messages.sql):
+  - `guest_messages(id, share_link_id FK, created_at, guest_name, kind ∈ {ai_result, pour_note}, payload jsonb)`. RLS enabled with a single `for select to authenticated` policy keyed on `share_links.owner_user_id = auth.uid()` — hosts read only their own; guests never query the table directly. Cascade-on-link-delete keeps cleanup automatic.
+  - `cellar27_share_create_message(p_token, p_guest_name, p_kind, p_payload)` SECURITY DEFINER RPC granted to `anon`. Validates the token (active + not expired), constrains `kind` to the two-element enum, and caps payload size at 32 KB so a leaked token can't fill the host's view with junk. Returns the new id; raises `link_invalid` / `invalid_kind` / `payload_too_large` for the existing `prettyShareError` mapper to render.
+- Guest UI ([`docs/js/app.js`](docs/js/app.js)):
+  - `renderGuestRecommendations(resultEl, response, bottleById, opts)` — added an `opts` arg carrying `{ token, requestType, context }`. When present, appends a `<section class="send-to-host">` with a "Send this to the host" button + a hidden inline name-prompt form. First send: button reveals the form, asks for an optional display name, posts via `sendGuestMessage`, persists the name to `localStorage.cellar27.guestName`, and morphs into "Sent ✓". Subsequent sends from the same device: one-tap (no prompt). Threaded through all three guest form handlers (Pair / Flight / Sommelier) so each carries its own `requestType` + `context` to the message payload.
+  - `renderTonightPane(root, plan, token)` — every `.pour-block` now ends with a `pourNoteWidgetHTML()`: a "Send a note to the host" toggle that reveals a textarea + Send button. Each submission posts a `pour_note` with `{ planned_flight_id, bottle_id, note }` and resets the textarea so the guest can keep adding notes (e.g. one before a sip, one after).
+- Owner UI:
+  - New "Guest activity" section on `/share` ([`docs/views/share.html`](docs/views/share.html) + `mountShare`). Loads `listGuestMessages(activeLink.id)` and renders a chronological feed of `<article class="guest-activity-card" data-kind="ai_result|pour_note">` cards. AI-result cards reuse `narrativeBlockHTML()` so the embedded narrative gets the same read-aloud treatment owner narratives have everywhere else. Pour-note cards link to `#/planned/<id>`. Cards are tinted with a left border by kind (highlight for pour_note, accent-2 for ai_result).
+  - Unread badge: a small red pip on the Share nav icon. `refreshShareNavBadge()` runs after every route change — calls `countGuestMessagesSince(activeLinkId, lastSeenIso)` and inserts a pip with the count (or `9+` if many). Cleared via `markGuestActivitySeen(linkId)` once the host visits `/share`. Per-link timestamp in `localStorage.cellar27.lastSeenGuestActivity.<linkId>`. No realtime — polled cheap on app activity.
+
+### Decisions
+
+- **Reuse `share_links` as the auth gate, not a new "guest session" concept**: every guest_message ties to a `share_link_id`, RLS gates host reads on `share_links.owner_user_id = auth.uid()`, and the guest insert RPC validates the token before insert. No second auth surface to maintain. When the link is revoked or expires, historical messages stay (rows live as long as the link row does, cascade-deleted only when the link is deleted).
+- **Keep `pour_note` per-pour, allow multiple sends**: each note is its own row instead of editing one note per pour. Matches how guests actually drink — one reaction before the food, another after a sip — and the host's chronological feed naturally surfaces the timing.
+- **Optional name with localStorage persistence over forced anonymity**: when there are 4 guests on the same link, "(unnamed guest) loved the Pinot" is useless. Storing on the guest's device (not the host's) keeps the host's data clean and lets a guest stay anonymous if they want.
+- **Polled badge over realtime**: realtime subscribe-per-share-link adds connection setup + tear-down on every route change for a "1+ unread" signal that's fine to be a few seconds stale. `count(*) where created_at > since` is one fast indexed lookup; we already do per-route work so adding it is free.
+- **No AI cost for guest_messages**: explicitly designed so sending a result back doesn't burn another Claude call. Guest messages are persistence of work that already happened. Keeps the share-link AI quota meaningful (it caps generation, not sharing).
+- **Pour notes don't prompt for a name on first use** (only AI-result sends do): keeps the per-pour widget tight. If a guest only ever uses Tonight (never the AI tabs), their notes save anonymous. Acceptable trade for v1; if it becomes a real complaint we can lift the same name prompt into the pour widget.
+
+### Validation
+
+- All touched JS files (`app.js`, `guest.js`, `share.js`) syntax-check clean. Bundle grew from ~76 KB (v0.10.0) to ~84 KB minified after v0.11.0 — within reason.
+- 0013 owner-applied 2026-05-02 (after the `DROP FUNCTION` follow-up fix); 0014 owner-applied later the same day. Both verified in Supabase SQL Editor.
+- Watcher untouched — both v0.10.x and v0.11.0 are pure client + Postgres. Watcher has been on PID 21244 since the 0.10.2 push without issue.
+- Owner is now testing the guest → host loop end-to-end on the phone (Phase 2 of this session's work).
+
+### Next
+
+User testing on phone. If anything cracks (e.g. RLS on guest_messages misbehaves, or a guest can't send when offline-then-reconnect), fix in v0.11.x. No major next slice queued — possible future: realtime or push for the unread badge if polling feels slow, photo attachments on pour notes if guests start asking, optional reply-from-host so the channel goes both ways. None of those are committed yet.
+
+---
+
 ## 2026-05-01 (afternoon) — planned flights + guest plan view (v0.9.9 → v0.10.0)
 
 ### Built

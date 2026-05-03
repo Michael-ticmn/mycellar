@@ -1,6 +1,6 @@
 # cellar27 — CURRENT_STATE.md
 
-## As of 2026-05-01 (v0.10.0 — planned flights + guest plan view)
+## As of 2026-05-02 (v0.11.0 — guest → host channel)
 
 **What exists and works:**
 
@@ -22,7 +22,18 @@
 - End-to-end pair, flight, drink-now, scan-add, scan-pour, manual-add — all working from phone PWA.
 - **Planned flights** (`#/planned`): owner saves a flight builder result via a "Save this flight" button, gets a sommelier-generated food (3–5 options) + per-bottle prep (chill / breathe / decant note / glassware / notes) plan, editable inline. List view groups Upcoming / Undated / Past by `occasion_date`. Picks + narrative are captured at save time so they survive bottle deletion. Backed by the new `planned_flights` table (RLS, user-scoped) and `request_type='flight_plan'` AI requests that write `{food, prep}` into `pairing_responses.payload`.
 - **Guest plan view** (`#/guest/<token>` Tonight tab): owner attaches one planned flight to their currently active share link; guests visiting the link land on a read-only walkthrough — welcome intro, food on offer, and a per-pour guide (what to look for, food cue with timing, transition to next pour). Walkthrough copy comes from a new `request_type='flight_guest'` that runs as the owner — does NOT consume the share-link AI quota. Lifetime + revoke ride on the existing `share_links.expires_at / revoked_at`. New anon RPC `cellar27_share_get_planned_flight(token)` projects only safe columns (no price / notes / storage / user_id leak).
-- **Guest sharing** (`#/share`): owner generates a short-lived, mobile-friendly link with a QR. Guests browse the cellar and run pair / flight / ask-sommelier without an account; price / notes / storage / label fields are stripped server-side. Per-link AI budget (independent of the owner's 100/hr quota), owner-picks-TTL at creation, one active link at a time, generating a new link revokes the prior. SECURITY DEFINER RPCs over an `anon` client; RLS on `bottles` and `pairing_requests` untouched.
+- **Guest sharing** (`#/share`): owner generates a short-lived, mobile-friendly link with a QR. Guests browse the cellar and run pair / flight / ask-sommelier without an account; price / notes / storage / label fields are stripped server-side. Per-link AI budget (independent of the owner's 100/hr quota), owner-picks-TTL at creation, one active link at a time, generating a new link revokes the prior. SECURITY DEFINER RPCs over an `anon` client; RLS on `bottles` and `pairing_requests` untouched. Guest bottle modal now surfaces the same sommelier enrichment (tasting notes / food pairings / producer / region / serving) the owner sees, via the widened `cellar27_share_list_bottles` RPC. Guest flight builder also takes the same Food + Notes inputs the owner has so guests can shape the flight by what they're eating.
+- **Guest → host channel** (`#/share` Guest activity feed): guests can send AI results (Pair / Flight / Sommelier) and per-pour notes from Tonight back to the host. First share prompts for an optional display name (stored in localStorage); subsequent sends auto-fill. Host sees a chronological feed on `/share` (kind chip + name + timestamp + content); pour notes link straight to the planned flight. Small unread pip on the Share nav icon clears once the host visits the page. Backed by a new `guest_messages` table (RLS-gated for hosts) and `cellar27_share_create_message` SECURITY DEFINER RPC for guests. No AI cost — these are persisted records, not new pairing requests.
+
+**Recently shipped (v0.11.0 — guest → host channel):**
+- New SQL migration [`0014_guest_messages.sql`](supabase/migrations/0014_guest_messages.sql): `guest_messages` table with RLS (`for select` keyed on `share_links.owner_user_id = auth.uid()`), and `cellar27_share_create_message(token, guest_name, kind, payload)` SECURITY DEFINER RPC granted to `anon` (validates token + caps payload at 32 KB + constrains kind to `'ai_result' | 'pour_note'`).
+- New owner UI: Guest activity section on the Share page rendering the messages newest-first; AI-result cards reuse `narrativeBlockHTML()` for the embedded narrative; pour-note cards link to `#/planned/<id>`. Small unread badge on the Share nav icon (`refreshShareNavBadge` runs on every route change, polled — no realtime).
+- New guest UI: "Send this to the host" button appended to every guest AI result via `renderGuestRecommendations({ token, requestType, context })`; "Send a note to the host" affordance on every Tonight pour block. localStorage key `cellar27.guestName` for one-tap subsequent sends.
+
+**Recently shipped (v0.10.1 → v0.10.3):**
+- v0.10.1: fixed transparent guest bottle-detail modal (`var(--surface-1)` was undefined; switched to `--surface` and added a soft shadow).
+- v0.10.2: guest bottle modal now shows the same depth as the owner detail page (sommelier enrichment block via the same `renderDetailsHTML()` helper); flight builder gained two optional inputs (Food + Notes) that the watcher's flight task body uses to weight picks.
+- v0.10.3: guest flight builder mirrors the owner's Food + Notes inputs so guest-spawned flights get the same context-aware picks.
 
 **Recently shipped (v0.10.0 — guest plan view):**
 - New SQL migration [`0013_guest_plan_view.sql`](supabase/migrations/0013_guest_plan_view.sql): `planned_flights.shared_via_link_id` (FK to share_links), `planned_flights.guest_view jsonb`, partial unique index enforcing one-plan-per-link, `request_type='flight_guest'` added to the check constraint, and `cellar27_share_get_planned_flight(p_token text)` SECURITY DEFINER RPC granted to `anon`.
@@ -79,6 +90,6 @@
 **What's broken / incomplete:**
 - Watcher runs on the owner's primary device, not an always-on host. Sleep = no AI processing during the sleep window. Acceptable for personal use.
 
-**Immediate next action:** none — guest plan view + richer guest bottle modal are live (0013 applied 2026-05-02). Owner is testing on the phone.
+**Immediate next action:** none — guest → host channel is live (0014 applied 2026-05-02). Owner is testing on the phone (send an AI result + a pour note as a guest, check the Guest activity feed + nav badge as the host).
 
 **Which surface should act next:** owner (test on phone).
