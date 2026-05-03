@@ -784,7 +784,7 @@ body.guest-mode .topbar .userbox { display: none; }
 .guest-modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 1rem; }
 .guest-modal[hidden] { display: none; }
 .guest-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); }
-.guest-modal-card { position: relative; max-width: 28rem; width: 100%; max-height: 85vh; overflow: auto; background: var(--surface-1); border: 1px solid var(--surface-2); border-radius: 12px; padding: 1.25rem 1.25rem 1.5rem; }
+.guest-modal-card { position: relative; max-width: 28rem; width: 100%; max-height: 85vh; overflow: auto; background: var(--surface); border: 1px solid var(--surface-2); border-radius: 12px; padding: 1.25rem 1.25rem 1.5rem; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
 .guest-modal-close { position: absolute; top: 0.5rem; right: 0.5rem; background: transparent; border: 0; color: var(--muted); font-size: 1.1rem; cursor: pointer; padding: 0.4rem 0.6rem; }
 .bottle-row, .bottle-card { cursor: pointer; }
 
