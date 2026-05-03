@@ -289,6 +289,8 @@ async function mountGuest(token) {
         theme: fd.get('theme'),
         guests: numOrNull(fd.get('guests')) ?? 4,
         length: numOrNull(fd.get('length')) ?? 3,
+        food:  fd.get('food')?.trim()  || null,
+        notes: fd.get('notes')?.trim() || null,
       });
       await renderGuestRecommendations(out, response, bottleById);
     });

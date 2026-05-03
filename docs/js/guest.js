@@ -74,8 +74,14 @@ export async function requestPairingForShare(token, { dish, guests, occasion, co
   return createAndAwait(token, 'pairing', { dish, guests, occasion, constraints });
 }
 
-export async function requestFlightForShare(token, { theme, guests, length }) {
-  return createAndAwait(token, 'flight', { theme, guests, length });
+export async function requestFlightForShare(token, { theme, guests, length, food, notes }) {
+  return createAndAwait(token, 'flight', {
+    theme,
+    guests,
+    length,
+    food:  food  || null,
+    notes: notes || null,
+  });
 }
 
 export async function requestFlightExtrasForShare(token, { themeHint }) {
