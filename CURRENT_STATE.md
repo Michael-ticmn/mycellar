@@ -73,12 +73,12 @@
 - esbuild dev dep pinned to `^0.25` so `npm audit` stays clean.
 
 **Owner action queued (see [`HANDOFF_QUEUE.md`](HANDOFF_QUEUE.md)):**
-- Apply migration [`0013_guest_plan_view.sql`](supabase/migrations/0013_guest_plan_view.sql) in the Supabase SQL Editor (0006–0012 already applied).
+- Optional: apply migrations 0006 + 0007 (security hardening) in the Supabase SQL Editor.
 - Optional: drop two phone screenshots into `docs/screenshots/` and wire into the manifest for a richer install prompt.
 
 **What's broken / incomplete:**
 - Watcher runs on the owner's primary device, not an always-on host. Sleep = no AI processing during the sleep window. Acceptable for personal use.
 
-**Immediate next action:** owner applies migration 0013 (watcher already restarted with the `flight_guest` task body).
+**Immediate next action:** none — guest plan view + richer guest bottle modal are live (0013 applied 2026-05-02). Owner is testing on the phone.
 
-**Which surface should act next:** owner.
+**Which surface should act next:** owner (test on phone).
