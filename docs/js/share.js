@@ -40,3 +40,31 @@ export function shareUrlFor(token) {
   const base = `${location.origin}${location.pathname.replace(/[^/]*$/, '')}`;
   return `${base}#/guest/${token}`;
 }
+
+// Owner-side: list messages guests have sent on this share link, newest
+// first. Direct query — RLS gates by share_links.owner_user_id, so we
+// don't need a SECURITY DEFINER RPC.
+export async function listGuestMessages(shareLinkId) {
+  const { data, error } = await sb
+    .from('guest_messages')
+    .select('id, created_at, guest_name, kind, payload')
+    .eq('share_link_id', shareLinkId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+// Owner-side helper used by the nav badge: how many messages have
+// landed on this owner's currently-active share link since `since`
+// (an ISO timestamp from localStorage). Tolerant of no-active-link
+// (returns 0 silently).
+export async function countGuestMessagesSince(shareLinkId, sinceIso) {
+  if (!shareLinkId) return 0;
+  const { count, error } = await sb
+    .from('guest_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('share_link_id', shareLinkId)
+    .gt('created_at', sinceIso || '1970-01-01T00:00:00Z');
+  if (error) return 0;
+  return count || 0;
+}

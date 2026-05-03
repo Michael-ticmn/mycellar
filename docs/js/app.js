@@ -17,9 +17,9 @@ import {
   resolveShare, listBottlesForShare,
   requestPairingForShare, requestFlightForShare,
   requestFlightExtrasForShare, requestDrinkNowForShare,
-  getSharedPlannedFlight,
+  getSharedPlannedFlight, sendGuestMessage,
 } from './guest.js';
-import { getActiveShareLink, createShareLink, revokeShareLink, shareUrlFor } from './share.js';
+import { getActiveShareLink, createShareLink, revokeShareLink, shareUrlFor, listGuestMessages, countGuestMessagesSince } from './share.js';
 
 const STYLES = [
   'light_red','medium_red','full_red',
@@ -82,6 +82,11 @@ async function render(providedSession) {
   $$('nav a').forEach((a) => {
     a.classList.toggle('active', a.dataset.route === route);
   });
+
+  // Best-effort: refresh the Share nav badge so the unread-guest pip
+  // stays accurate as the user moves around. Cheap (one head/count
+  // query against guest_messages) and tolerant of failures.
+  refreshShareNavBadge().catch(() => {});
 
   const html = await loadView(route);
   if (html === null) return; // superseded by a newer navigation
@@ -150,8 +155,18 @@ async function mountShare() {
     };
   };
 
-  try { renderActive(await getActiveShareLink()); }
-  catch (e) { errEl.textContent = e.message; }
+  let activeLink = null;
+  try {
+    activeLink = await getActiveShareLink();
+    renderActive(activeLink);
+  } catch (e) { errEl.textContent = e.message; }
+
+  // Guest activity feed — load + render below the share-link card.
+  // Updates the unread-since timestamp once visible so the nav badge
+  // clears after the host eyeballs the page.
+  await renderGuestActivity(activeLink);
+  if (activeLink) markGuestActivitySeen(activeLink.id);
+  refreshShareNavBadge();
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -163,13 +178,141 @@ async function mountShare() {
     btn.disabled = true;
     try {
       const link = await createShareLink({ ttlHours, aiQuota });
+      activeLink = link;
       renderActive(link);
+      await renderGuestActivity(link);
     } catch (err) {
       errEl.textContent = err.message;
     } finally {
       btn.disabled = false;
     }
   });
+}
+
+// ── Guest activity (owner-side feed of guest_messages) ────────────
+
+const LAST_SEEN_GUEST_ACTIVITY_KEY = 'cellar27.lastSeenGuestActivity';
+function getLastSeenGuestActivity(linkId) {
+  try { return localStorage.getItem(`${LAST_SEEN_GUEST_ACTIVITY_KEY}.${linkId}`) || null; }
+  catch { return null; }
+}
+function markGuestActivitySeen(linkId) {
+  try { localStorage.setItem(`${LAST_SEEN_GUEST_ACTIVITY_KEY}.${linkId}`, new Date().toISOString()); }
+  catch { /* private mode */ }
+}
+
+async function renderGuestActivity(link) {
+  const section = $('#share-guest-activity');
+  const list    = $('#share-guest-activity-list');
+  if (!section || !list) return;
+
+  if (!link) {
+    // Could still show historical messages from a prior link, but the
+    // UI is keyed off the active link to keep the page coherent.
+    section.hidden = true;
+    return;
+  }
+
+  let messages;
+  try { messages = await listGuestMessages(link.id); }
+  catch (e) {
+    section.hidden = false;
+    list.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
+    return;
+  }
+
+  section.hidden = false;
+  if (!messages.length) {
+    list.innerHTML = '<p class="muted">No guest activity yet. When guests use the share link to ask the sommelier or leave a note on Tonight, it shows up here.</p>';
+    return;
+  }
+  list.innerHTML = messages.map((m) => guestActivityCardHTML(m)).join('');
+}
+
+function guestActivityCardHTML(m) {
+  const when = new Date(m.created_at);
+  const ts = when.toLocaleString('en-US',
+    { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const who = m.guest_name ? escapeHtml(m.guest_name) : '<span class="muted">(unnamed guest)</span>';
+  if (m.kind === 'pour_note') {
+    const p   = m.payload || {};
+    const link = p.planned_flight_id ? `#/planned/${p.planned_flight_id}` : '#';
+    return `<article class="guest-activity-card" data-kind="pour_note">
+      <header class="guest-activity-head">
+        <span class="guest-activity-kind">Pour note</span>
+        <span class="guest-activity-who">${who}</span>
+        <span class="guest-activity-ts muted">${escapeHtml(ts)}</span>
+      </header>
+      <p class="guest-activity-note">${escapeHtml(p.note || '')}</p>
+      <p class="muted"><a href="${escapeAttr(link)}">Open the planned flight ↗</a></p>
+    </article>`;
+  }
+  // ai_result
+  const p = m.payload || {};
+  const reqType = (p.request_type || 'ai_result').replace('_', ' ');
+  const ctxBits = ctxSummary(p.context, p.request_type);
+  const recs    = Array.isArray(p.recommendations) ? p.recommendations : [];
+  const recList = recs.length
+    ? `<ul class="guest-activity-recs">${recs.map((r) => `<li>
+        <span class="qty">${escapeHtml(r.confidence || 'medium')}</span>
+        <code>${escapeHtml(r.bottle_id)}</code>
+        ${r.reasoning ? `<span class="muted"> — ${escapeHtml(r.reasoning)}</span>` : ''}
+      </li>`).join('')}</ul>`
+    : '';
+  const narrative = p.narrative
+    ? narrativeBlockHTML(p.narrative, { heading: 'Narrative', headingTag: 'h4' })
+    : '';
+  return `<article class="guest-activity-card" data-kind="ai_result">
+    <header class="guest-activity-head">
+      <span class="guest-activity-kind">${escapeHtml(reqType)}</span>
+      <span class="guest-activity-who">${who}</span>
+      <span class="guest-activity-ts muted">${escapeHtml(ts)}</span>
+    </header>
+    ${ctxBits ? `<p class="muted">${ctxBits}</p>` : ''}
+    ${narrative}
+    ${recList}
+  </article>`;
+}
+
+// Compact one-line summary of the request context — what the guest
+// actually asked for. Kept escaped/short so the card stays scannable.
+function ctxSummary(ctx, requestType) {
+  if (!ctx || typeof ctx !== 'object') return '';
+  const bits = [];
+  if (requestType === 'pairing') {
+    if (ctx.dish)        bits.push(`Dish: ${escapeHtml(ctx.dish)}`);
+    if (ctx.occasion)    bits.push(`Occasion: ${escapeHtml(ctx.occasion)}`);
+    if (ctx.constraints) bits.push(`Constraints: ${escapeHtml(ctx.constraints)}`);
+  } else if (requestType === 'flight') {
+    if (ctx.theme)  bits.push(`Theme: ${escapeHtml(ctx.theme.replace(/_/g, ' '))}`);
+    if (ctx.length) bits.push(`${ctx.length} bottles`);
+    if (ctx.food)   bits.push(`Food: ${escapeHtml(ctx.food)}`);
+    if (ctx.notes)  bits.push(`Notes: ${escapeHtml(ctx.notes)}`);
+  } else if (requestType === 'drink_now') {
+    if (ctx.notes) bits.push(`Notes: ${escapeHtml(ctx.notes)}`);
+  }
+  return bits.join(' · ');
+}
+
+// Refresh the unread-pip on the Share nav icon. Called on app boot,
+// after route changes, and after any owner-side action that might
+// affect the count.
+async function refreshShareNavBadge() {
+  const navEl = $('nav a[data-route="share"]');
+  if (!navEl) return;
+  navEl.querySelector('.share-nav-badge')?.remove();
+  let link;
+  try { link = await getActiveShareLink(); } catch { return; }
+  if (!link) return;
+  const since = getLastSeenGuestActivity(link.id);
+  let count;
+  try { count = await countGuestMessagesSince(link.id, since); } catch { return; }
+  if (count <= 0) return;
+  const pip = document.createElement('span');
+  pip.className = 'share-nav-badge';
+  pip.textContent = count > 9 ? '9+' : String(count);
+  pip.setAttribute('aria-label', `${count} new guest message${count === 1 ? '' : 's'}`);
+  navEl.appendChild(pip);
 }
 
 // ── Guest share view (anonymous, token-gated, read-only) ──────────
@@ -237,7 +380,7 @@ async function mountGuest(token) {
     if (tonightTab)  tonightTab.classList.add('active');
     // Hide non-Tonight panes by default until the user clicks another tab.
     $$('.guest-pane').forEach((p) => { p.hidden = p.dataset.pane !== 'tonight'; });
-    renderTonightPane($('#guest-tonight-root'), tonightPlan);
+    renderTonightPane($('#guest-tonight-root'), tonightPlan, token);
   }
 
   // Modal close (backdrop or ✕)
@@ -268,13 +411,16 @@ async function mountGuest(token) {
     const fd = new FormData(e.currentTarget);
     const out = $('#guest-pair-result');
     await withBusySubmit(e.currentTarget, out, 'Asking the sommelier… (up to a couple of minutes)', async () => {
-      const { response } = await requestPairingForShare(token, {
+      const ctx = {
         dish: fd.get('dish').trim(),
         guests: numOrNull(fd.get('guests')) ?? 2,
         occasion: fd.get('occasion'),
         constraints: fd.get('constraints')?.trim() || null,
+      };
+      const { response } = await requestPairingForShare(token, ctx);
+      await renderGuestRecommendations(out, response, bottleById, {
+        token, requestType: 'pairing', context: ctx,
       });
-      await renderGuestRecommendations(out, response, bottleById);
     });
     refreshQuota();
   });
@@ -285,14 +431,17 @@ async function mountGuest(token) {
     const fd = new FormData(e.currentTarget);
     const out = $('#guest-flight-result');
     await withBusySubmit(e.currentTarget, out, 'Building the flight…', async () => {
-      const { response } = await requestFlightForShare(token, {
+      const ctx = {
         theme: fd.get('theme'),
         guests: numOrNull(fd.get('guests')) ?? 4,
         length: numOrNull(fd.get('length')) ?? 3,
         food:  fd.get('food')?.trim()  || null,
         notes: fd.get('notes')?.trim() || null,
+      };
+      const { response } = await requestFlightForShare(token, ctx);
+      await renderGuestRecommendations(out, response, bottleById, {
+        token, requestType: 'flight', context: ctx,
       });
-      await renderGuestRecommendations(out, response, bottleById);
     });
     refreshQuota();
   });
@@ -303,8 +452,11 @@ async function mountGuest(token) {
     const fd = new FormData(e.currentTarget);
     const out = $('#guest-drinknow-result');
     await withBusySubmit(e.currentTarget, out, 'Asking the sommelier…', async () => {
-      const { response } = await requestDrinkNowForShare(token, { notes: fd.get('notes')?.trim() || null });
-      await renderGuestRecommendations(out, response, bottleById);
+      const ctx = { notes: fd.get('notes')?.trim() || null };
+      const { response } = await requestDrinkNowForShare(token, ctx);
+      await renderGuestRecommendations(out, response, bottleById, {
+        token, requestType: 'drink_now', context: ctx,
+      });
     });
     refreshQuota();
   });
@@ -356,7 +508,7 @@ async function mountGuest(token) {
   repaint();
 }
 
-async function renderGuestRecommendations(resultEl, response, bottleById) {
+async function renderGuestRecommendations(resultEl, response, bottleById, opts = {}) {
   const recs = Array.isArray(response.recommendations) ? response.recommendations : [];
   const cards = recs.map((r) => {
     const bottle = bottleById.get(r.bottle_id);
@@ -377,13 +529,104 @@ async function renderGuestRecommendations(resultEl, response, bottleById) {
     </article>`;
   });
   const narrative = narrativeBlockHTML(response.narrative, { heading: 'Narrative' });
+  const sendBlock = (opts.token && opts.requestType) ? sendToHostBlockHTML() : '';
   resultEl.innerHTML = `
     ${narrative}
     <section>
       <h2>Picks</h2>
       <div class="grid">${cards.join('') || '<p class="muted">(no recommendations)</p>'}</div>
-    </section>`;
+    </section>
+    ${sendBlock}`;
   wireGuestBottleClicks(resultEl, bottleById);
+  if (opts.token && opts.requestType) {
+    wireSendToHost(resultEl, opts.token, {
+      kind: 'ai_result',
+      payload: {
+        request_type:    opts.requestType,
+        context:         opts.context || {},
+        recommendations: recs,
+        narrative:       response.narrative || null,
+      },
+    });
+  }
+}
+
+// Inline "Send to host" affordance + first-time name prompt. Renders
+// inside any guest result panel (Pair / Flight / Sommelier). Once sent,
+// the button collapses to "Sent ✓" so the same result can't be double-
+// posted from the same render. Guest's display name persists in
+// localStorage so subsequent sends auto-fill.
+const GUEST_NAME_KEY = 'cellar27.guestName';
+function getGuestName() {
+  try { return localStorage.getItem(GUEST_NAME_KEY) || ''; }
+  catch { return ''; }
+}
+function setGuestName(name) {
+  try { localStorage.setItem(GUEST_NAME_KEY, name); } catch { /* private mode */ }
+}
+
+function sendToHostBlockHTML() {
+  return `<section class="send-to-host">
+    <button type="button" data-send-host>Send this to the host</button>
+    <form class="send-to-host-form" data-send-host-form hidden>
+      <label>Your name (so the host knows who sent this)
+        <input type="text" name="guest_name" placeholder="e.g. Mike" />
+      </label>
+      <div class="row">
+        <button type="submit">Send</button>
+        <button type="button" class="ghost" data-send-host-cancel>Cancel</button>
+      </div>
+      <p class="error send-to-host-error" hidden></p>
+    </form>
+  </section>`;
+}
+
+function wireSendToHost(root, token, message) {
+  const btn    = $('[data-send-host]', root);
+  const form   = $('[data-send-host-form]', root);
+  const cancel = $('[data-send-host-cancel]', root);
+  if (!btn || !form) return;
+  const errEl  = $('.send-to-host-error', form);
+  const showErr = (msg) => { if (!errEl) return; errEl.hidden = !msg; errEl.textContent = msg || ''; };
+  const nameInput = form.querySelector('input[name="guest_name"]');
+  if (nameInput) nameInput.value = getGuestName();
+
+  const send = async (guestName) => {
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    try {
+      await sendGuestMessage(token, { ...message, guestName });
+      if (guestName) setGuestName(guestName);
+      btn.textContent = 'Sent ✓';
+      btn.classList.add('sent');
+      form.hidden = true;
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'Send this to the host';
+      showErr(err.message);
+    }
+  };
+
+  btn.addEventListener('click', () => {
+    const saved = getGuestName();
+    if (saved) {
+      // Skip the prompt — name already known. One-tap send.
+      send(saved);
+    } else {
+      form.hidden = false;
+      btn.hidden  = true;
+      nameInput?.focus();
+    }
+  });
+  cancel?.addEventListener('click', () => {
+    form.hidden = true;
+    btn.hidden  = false;
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = (nameInput?.value || '').trim();
+    send(name || null);
+  });
 }
 
 function wireGuestBottleClicks(root, bottleById) {
@@ -398,7 +641,7 @@ function wireGuestBottleClicks(root, bottleById) {
 // Render the Tonight tab — read-only walkthrough for guests of a saved
 // planned flight. Falls back to plan.narrative when guest_view hasn't
 // been generated yet so the page still works pre-walkthrough.
-function renderTonightPane(root, plan) {
+function renderTonightPane(root, plan, token) {
   if (!root || !plan) return;
   const bottles  = Array.isArray(plan.bottles) ? plan.bottles : [];
   const bottleById = new Map(bottles.map((b) => [b.id, b]));
@@ -458,13 +701,15 @@ function renderTonightPane(root, plan) {
       const transition = w?.transition
         ? `<p class="pour-transition">${escapeHtml(w.transition)}</p>`
         : '';
-      return `<article class="pour-block" data-style="${escapeAttr(bottle?.style || '')}">
+      const noteWidget = token ? pourNoteWidgetHTML() : '';
+      return `<article class="pour-block" data-style="${escapeAttr(bottle?.style || '')}" data-pour-bottle-id="${escapeAttr(pick.bottle_id)}">
         <div class="pour-num">Pour ${num}</div>
         <h3>${title}</h3>
         ${sub ? `<p class="muted">${sub}</p>` : ''}
         ${lookFor}
         ${cue}
         ${transition}
+        ${noteWidget}
       </article>`;
     }).join('')}
   </section>` : '';
@@ -475,6 +720,74 @@ function renderTonightPane(root, plan) {
     ${foodHTML}
     ${poursHTML}
   </div>`;
+
+  if (token) wirePourNoteWidgets(root, token, plan.id);
+}
+
+// Per-pour "Send a note to the host" affordance. Multiple notes per
+// pour allowed — each submission posts a separate guest_message and
+// resets the form so the guest can keep adding (e.g. one note before
+// a sip, another after).
+function pourNoteWidgetHTML() {
+  return `<div class="pour-note">
+    <button type="button" class="ghost" data-pour-note-toggle>Send a note to the host</button>
+    <form class="pour-note-form" data-pour-note-form hidden>
+      <textarea name="note" rows="2" placeholder="What did you notice? What would you tell the host?" required></textarea>
+      <div class="row">
+        <button type="submit">Send</button>
+        <button type="button" class="ghost" data-pour-note-cancel>Cancel</button>
+      </div>
+      <p class="muted pour-note-status" hidden></p>
+      <p class="error pour-note-error" hidden></p>
+    </form>
+  </div>`;
+}
+
+function wirePourNoteWidgets(root, token, plannedFlightId) {
+  $$('.pour-block', root).forEach((block) => {
+    const bottleId = block.dataset.pourBottleId;
+    const toggle   = $('[data-pour-note-toggle]', block);
+    const form     = $('[data-pour-note-form]', block);
+    const cancel   = $('[data-pour-note-cancel]', block);
+    if (!toggle || !form) return;
+    const errEl    = $('.pour-note-error', form);
+    const statusEl = $('.pour-note-status', form);
+    const showErr = (msg) => { if (!errEl) return; errEl.hidden = !msg; errEl.textContent = msg || ''; };
+    const showOk  = (msg) => { if (!statusEl) return; statusEl.hidden = !msg; statusEl.textContent = msg || ''; };
+
+    toggle.addEventListener('click', () => {
+      form.hidden = false;
+      toggle.hidden = true;
+      form.querySelector('textarea')?.focus();
+    });
+    cancel?.addEventListener('click', () => {
+      form.hidden = true;
+      toggle.hidden = false;
+      showErr(''); showOk('');
+    });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const ta = form.querySelector('textarea');
+      const note = (ta?.value || '').trim();
+      if (!note) return;
+      const submitBtn = form.querySelector('button[type="submit"]');
+      if (submitBtn) submitBtn.disabled = true;
+      showErr(''); showOk('');
+      try {
+        await sendGuestMessage(token, {
+          kind: 'pour_note',
+          payload: { planned_flight_id: plannedFlightId, bottle_id: bottleId, note },
+          guestName: getGuestName(),
+        });
+        if (ta) ta.value = '';
+        showOk('Sent ✓');
+      } catch (err) {
+        showErr(err.message);
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  });
 }
 
 function showGuestBottleDetail(b) {

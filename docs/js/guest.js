@@ -25,6 +25,20 @@ export async function getSharedPlannedFlight(token) {
   return data || null;
 }
 
+// Send a message back to the host: an AI result the guest received
+// (kind='ai_result') or a per-pour note on Tonight (kind='pour_note').
+// guestName is optional; the SECURITY DEFINER RPC nullifies blank/whitespace.
+export async function sendGuestMessage(token, { kind, payload, guestName }) {
+  const { data, error } = await sb.rpc('cellar27_share_create_message', {
+    p_token:      token,
+    p_guest_name: guestName || null,
+    p_kind:       kind,
+    p_payload:    payload,
+  });
+  if (error) throw new Error(prettyShareError(error));
+  return data;
+}
+
 // Anon clients can't subscribe to RLS-protected tables via Realtime; poll the
 // SECURITY DEFINER reader instead. Mirrors the timeout shape of waitForResponse
 // in pairings.js (5 min cap).

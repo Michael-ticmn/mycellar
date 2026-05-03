@@ -1104,3 +1104,131 @@ body.guest-mode .topbar .userbox { display: none; }
 .pour-block[data-style="sparkling"]    { border-left: 4px solid #d8c878; }
 .pour-block[data-style="dessert"]      { border-left: 4px solid #a8682a; }
 .pour-block[data-style="fortified"]    { border-left: 4px solid #8a3818; }
+
+/* ──────────── Guest → Host channel ──────────── */
+
+/* Guest "Send to host" button on AI results */
+.send-to-host {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--surface-2);
+  display: grid;
+  gap: 0.5rem;
+}
+.send-to-host [data-send-host] { width: max-content; }
+.send-to-host [data-send-host].sent {
+  background: var(--surface-2);
+  border-color: var(--surface-2);
+  cursor: default;
+}
+.send-to-host-form {
+  display: grid;
+  gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+}
+
+/* Per-pour note widget on the Tonight tab */
+.pour-note {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--surface-2);
+}
+.pour-note [data-pour-note-toggle] {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.7rem;
+}
+.pour-note-form {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.pour-note-form textarea {
+  width: 100%;
+  font: inherit;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 0.5rem;
+  resize: vertical;
+}
+.pour-note-status { font-size: 0.85rem; color: var(--highlight); margin: 0; }
+
+/* Owner-side: Guest activity feed on the Share page */
+.share-guest-activity { margin-top: 2rem; }
+#share-guest-activity-list {
+  display: grid;
+  gap: 0.75rem;
+}
+.guest-activity-card {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+.guest-activity-card[data-kind="pour_note"] { border-left: 4px solid var(--highlight); }
+.guest-activity-card[data-kind="ai_result"] { border-left: 4px solid var(--accent-2); }
+.guest-activity-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+}
+.guest-activity-kind {
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  color: var(--highlight);
+  font-weight: 600;
+}
+.guest-activity-who { font-weight: 500; }
+.guest-activity-ts { margin-left: auto; }
+.guest-activity-note {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+}
+.guest-activity-recs {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+.guest-activity-recs code {
+  font-size: 0.7rem;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+}
+
+/* Nav badge: small pip on the Share icon when there's unread guest activity */
+.topbar nav a[data-route="share"] { position: relative; }
+.share-nav-badge {
+  position: absolute;
+  top: 0.15rem;
+  right: 0.15rem;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--error);
+  color: var(--text);
+  font-size: 0.65rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--surface);
+}
