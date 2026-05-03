@@ -91,7 +91,8 @@ begin
            'sweetness',          b.sweetness,
            'body',               b.body,
            'drink_window_start', b.drink_window_start,
-           'drink_window_end',   b.drink_window_end
+           'drink_window_end',   b.drink_window_end,
+           'details',            b.details
          )), '[]'::jsonb)
     into v_bottles
     from bottles b
@@ -118,3 +119,60 @@ $$;
 
 revoke all on function cellar27_share_get_planned_flight(text) from public;
 grant execute on function cellar27_share_get_planned_flight(text) to anon, authenticated;
+
+------------------------------------------------------------
+-- 4. Widen cellar27_share_list_bottles to surface bottles.details (the
+--    AI enrichment jsonb added by migration 0003 — tasting notes, food
+--    pairings, producer background, region context, drinking-window
+--    rationale, serving). Owner-private fields (price/notes/storage/
+--    label paths/user_id) stay excluded.
+--
+--    Re-runs the function definition from 0011_share_search_path_hardening
+--    with the extra `details` column in the return type and projection.
+--    Idempotent — keeps the same search_path lockdown and schema-qualified
+--    table refs as 0011.
+------------------------------------------------------------
+
+create or replace function cellar27_share_list_bottles(p_token text)
+returns table (
+  id                 uuid,
+  producer           text,
+  wine_name          text,
+  varietal           text,
+  blend_components   jsonb,
+  vintage            int,
+  region             text,
+  country            text,
+  style              text,
+  sweetness          text,
+  body               int,
+  quantity           int,
+  drink_window_start int,
+  drink_window_end   int,
+  details            jsonb
+)
+language plpgsql stable security definer set search_path = pg_catalog, public as $$
+declare
+  v_owner uuid;
+begin
+  select owner_user_id into v_owner
+    from public.share_links
+   where token       = p_token
+     and revoked_at is null
+     and expires_at  > now();
+
+  if v_owner is null then
+    raise exception 'link_invalid' using errcode = 'P0001';
+  end if;
+
+  return query
+    select b.id, b.producer, b.wine_name, b.varietal, b.blend_components,
+           b.vintage, b.region, b.country, b.style, b.sweetness, b.body,
+           b.quantity, b.drink_window_start, b.drink_window_end, b.details
+      from public.bottles b
+     where b.user_id = v_owner;
+end;
+$$;
+
+revoke all on function cellar27_share_list_bottles(text) from public;
+grant execute on function cellar27_share_list_bottles(text) to anon, authenticated;

@@ -481,6 +481,16 @@ function showGuestBottleDetail(b) {
   const sub = [b.varietal, b.vintage, b.region, b.country].filter(Boolean).map(escapeHtml).join(' · ');
   const window = (b.drink_window_start && b.drink_window_end)
     ? `${b.drink_window_start}–${b.drink_window_end}` : '—';
+  // The share RPC now returns `b.details` (sommelier enrichment jsonb —
+  // tasting notes, food pairings, producer/region/serving). Render it
+  // through the same helper the owner detail page uses so guests see
+  // the same depth of info.
+  const detailsBlock = b.details
+    ? `<section class="narrative-block guest-bottle-details">
+        <div class="narrative-head"><h3>More info</h3>${speakBtnHTML()}</div>
+        <div class="narrative">${renderDetailsHTML(b.details)}</div>
+      </section>`
+    : '';
   $('#guest-bottle-detail').innerHTML = `
     <h2>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h2>
     <p class="muted">${sub}</p>
@@ -490,7 +500,8 @@ function showGuestBottleDetail(b) {
       ${b.body ? `<dt>Body</dt><dd>${b.body} / 5</dd>` : ''}
       <dt>Quantity</dt><dd>×${b.quantity}</dd>
       <dt>Drink window</dt><dd>${window}</dd>
-    </dl>`;
+    </dl>
+    ${detailsBlock}`;
   modal.hidden = false;
 }
 
@@ -1228,13 +1239,15 @@ function mountFlight() {
         const theme  = fd.get('theme');
         const guests = numOrNull(fd.get('guests')) ?? 4;
         const length = numOrNull(fd.get('length')) ?? 3;
-        const { request, response } = await requestFlight({ theme, guests, length });
+        const food   = fd.get('food')?.trim()  || null;
+        const notes  = fd.get('notes')?.trim() || null;
+        const { request, response } = await requestFlight({ theme, guests, length, food, notes });
         // Stamp the request id onto the response so the Save handler can
         // record source_request_id without having to refetch.
         response.request_id = request.id;
         await renderRecommendations(result, response, {
           savable: true,
-          context: { theme, guests, length },
+          context: { theme, guests, length, food, notes },
         });
         cacheResult('flight', result);
       });

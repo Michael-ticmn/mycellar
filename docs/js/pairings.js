@@ -8,10 +8,16 @@ export async function requestPairing({ dish, guests, occasion, constraints }) {
   return { request: req, response: await waitForResponse(req.id) };
 }
 
-export async function requestFlight({ theme, guests, length }) {
+export async function requestFlight({ theme, guests, length, food, notes }) {
   const req = await createRequest({
     requestType: 'flight',
-    context: { theme, guests, length },
+    context: {
+      theme,
+      guests,
+      length,
+      food:  food  || null,
+      notes: notes || null,
+    },
   });
   return { request: req, response: await waitForResponse(req.id) };
 }

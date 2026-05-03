@@ -90,7 +90,9 @@ Keep the buy suggestion to 2–3 sentences max plus the price range. Don't pad. 
       if (ctx.kind === 'extras') {
         body = `Suggest 1–2 specific wines (producer + wine name + vintage range, NOT from the user's cellar above) that would meaningfully round out their flight-building potential. ${ctx.theme_hint ? `Constraint or theme they're aiming for: ${ctx.theme_hint}.` : 'Look at gaps in their current cellar — varietals, regions, vintages, styles missing.'} For each suggestion include: producer + wine + vintage range, what flight it would unlock (with which existing bottles), why it fills a gap, and an approximate retail price range. Recommendations array stays EMPTY (these aren't owned); put the picks in the Narrative as a clearly formatted list.`;
       } else {
-        body = `Build a tasting flight of 3–5 bottles in a deliberate order. Theme: ${ctx.theme || 'unspecified'}. Length: ${ctx.length || 3}. Each pick should teach the palate something in relation to the others; explain the progression in the narrative.`;
+        const foodLine  = ctx.food  ? `\nFood being served: ${ctx.food}.` : '';
+        const notesLine = ctx.notes ? `\nHost notes: ${ctx.notes}.` : '';
+        body = `Build a tasting flight of 3–5 bottles in a deliberate order. Theme: ${ctx.theme || 'unspecified'}. Length: ${ctx.length || 3}.${foodLine}${notesLine} Each pick should teach the palate something in relation to the others; explain the progression in the narrative.${ctx.food ? ` If a food is named above, weight pick choice and ordering toward bottles that flatter it (or contrast it deliberately) — and call out in the narrative which pour pairs with the food.` : ''}${ctx.notes ? ` Honor the host notes — they constrain the picks (e.g. avoid heavy reds, favor newcomers, lean to bottles aged a year+).` : ''}`;
       }
       break;
     case 'drink_now':
