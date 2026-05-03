@@ -19,7 +19,7 @@ import {
   requestFlightExtrasForShare, requestDrinkNowForShare,
   getSharedPlannedFlight, sendGuestMessage,
 } from './guest.js';
-import { getActiveShareLink, createShareLink, revokeShareLink, shareUrlFor, listGuestMessages, countGuestMessagesSince } from './share.js';
+import { getActiveShareLink, createShareLink, revokeShareLink, shareUrlFor, listGuestMessages, countGuestMessagesSince, listAllOwnerShareLinks, listAllOwnerGuestMessages } from './share.js';
 
 const STYLES = [
   'light_red','medium_red','full_red',
@@ -201,21 +201,18 @@ function markGuestActivitySeen(linkId) {
   catch { /* private mode */ }
 }
 
-async function renderGuestActivity(link) {
+async function renderGuestActivity(activeLink) {
   const section = $('#share-guest-activity');
   const list    = $('#share-guest-activity-list');
   if (!section || !list) return;
 
-  if (!link) {
-    // Could still show historical messages from a prior link, but the
-    // UI is keyed off the active link to keep the page coherent.
-    section.hidden = true;
-    return;
-  }
-
-  let messages;
-  try { messages = await listGuestMessages(link.id); }
-  catch (e) {
+  let messages, links;
+  try {
+    [messages, links] = await Promise.all([
+      listAllOwnerGuestMessages(),
+      listAllOwnerShareLinks(),
+    ]);
+  } catch (e) {
     section.hidden = false;
     list.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
     return;
@@ -223,15 +220,44 @@ async function renderGuestActivity(link) {
 
   section.hidden = false;
   if (!messages.length) {
-    list.innerHTML = '<p class="muted">No guest activity yet. When guests use the share link to ask the sommelier or leave a note on Tonight, it shows up here.</p>';
+    list.innerHTML = '<p class="muted">No guest activity yet. When guests use the share link to ask the sommelier or leave a note on Tonight, it shows up here. Past tastings stay visible after the link expires.</p>';
     return;
   }
-  list.innerHTML = messages.map((m) => guestActivityCardHTML(m)).join('');
-  // Wire each "Save as planned flight" button to its source message.
-  const byId = new Map(messages.map((m) => [m.id, m]));
+
+  // Group messages by share_link_id. Active link first (open), prior
+  // links collapsed. Render each group split into Suggestions
+  // (ai_result) vs Event comments (pour_note) so the host can scan
+  // them independently.
+  const byLinkId = new Map();
+  for (const m of messages) {
+    if (!byLinkId.has(m.share_link_id)) byLinkId.set(m.share_link_id, []);
+    byLinkId.get(m.share_link_id).push(m);
+  }
+  const linkById = new Map(links.map((l) => [l.id, l]));
+
+  // Order: active first (if it has messages), then everything else by
+  // most recent message timestamp.
+  const groupIds = [...byLinkId.keys()];
+  groupIds.sort((a, b) => {
+    if (activeLink && a === activeLink.id) return -1;
+    if (activeLink && b === activeLink.id) return 1;
+    const ta = new Date(byLinkId.get(a)[0].created_at).getTime();
+    const tb = new Date(byLinkId.get(b)[0].created_at).getTime();
+    return tb - ta;
+  });
+
+  list.innerHTML = groupIds.map((linkId, i) => {
+    const link = linkById.get(linkId);
+    const groupMessages = byLinkId.get(linkId);
+    const isActive = activeLink && linkId === activeLink.id;
+    return guestActivityGroupHTML({ link, linkId, groupMessages, isActive, openByDefault: i === 0 });
+  }).join('');
+
+  // Wire all Save-as-planned-flight buttons across all groups.
+  const messagesById = new Map(messages.map((m) => [m.id, m]));
   $$('[data-promote-message-id]', list).forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const message = byId.get(btn.dataset.promoteMessageId);
+      const message = messagesById.get(btn.dataset.promoteMessageId);
       if (!message) return;
       const errEl = btn.parentElement?.querySelector('.guest-activity-error');
       const showErr = (msg) => { if (!errEl) return; errEl.hidden = !msg; errEl.textContent = msg || ''; };
@@ -241,8 +267,6 @@ async function renderGuestActivity(link) {
       showErr('');
       try {
         await promoteGuestFlightToPlanned(message);
-        // Navigation handled inside promote helper; if we get here without
-        // a redirect for any reason, restore the button.
       } catch (err) {
         btn.disabled = false;
         btn.textContent = original;
@@ -250,6 +274,58 @@ async function renderGuestActivity(link) {
       }
     });
   });
+}
+
+// One tasting session: all messages tied to a single share link, split
+// into Suggestions (AI results sent back) and Event comments (pour
+// notes). The active link's group is rendered open; older groups
+// collapsed under <details> so the page stays scannable.
+function guestActivityGroupHTML({ link, linkId, groupMessages, isActive, openByDefault }) {
+  const suggestions = groupMessages.filter((m) => m.kind === 'ai_result');
+  const comments    = groupMessages.filter((m) => m.kind === 'pour_note');
+  const headerLabel = guestActivityGroupLabel(link, isActive);
+  const counts = [
+    suggestions.length ? `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'}` : null,
+    comments.length    ? `${comments.length} event comment${comments.length === 1 ? '' : 's'}`     : null,
+  ].filter(Boolean).join(' · ');
+
+  const suggestionsBlock = suggestions.length
+    ? `<section class="guest-activity-bucket" data-bucket="suggestions">
+        <h3>Suggestions sent back</h3>
+        ${suggestions.map((m) => guestActivityCardHTML(m)).join('')}
+      </section>`
+    : '';
+  const commentsBlock = comments.length
+    ? `<section class="guest-activity-bucket" data-bucket="comments">
+        <h3>Event comments</h3>
+        ${comments.map((m) => guestActivityCardHTML(m)).join('')}
+      </section>`
+    : '';
+
+  // Use <details> for native collapse on older groups; the active
+  // tasting always opens by default.
+  const open = openByDefault ? ' open' : '';
+  return `<details class="guest-activity-group${isActive ? ' is-active' : ''}"${open} data-link-id="${escapeAttr(linkId)}">
+    <summary>
+      <span class="guest-activity-group-label">${headerLabel}</span>
+      ${counts ? `<span class="guest-activity-group-counts muted">${escapeHtml(counts)}</span>` : ''}
+    </summary>
+    <div class="guest-activity-group-body">
+      ${suggestionsBlock}
+      ${commentsBlock}
+    </div>
+  </details>`;
+}
+
+function guestActivityGroupLabel(link, isActive) {
+  if (!link) return '<span class="muted">Tasting (link deleted)</span>';
+  const created = new Date(link.created_at);
+  const dateLabel = created.toLocaleDateString('en-US',
+    { weekday: 'short', month: 'short', day: 'numeric' });
+  if (isActive) return `Active tasting <span class="muted">· started ${escapeHtml(dateLabel)}</span>`;
+  if (link.revoked_at) return `Tasting from ${escapeHtml(dateLabel)} <span class="muted">· revoked</span>`;
+  if (new Date(link.expires_at) <= new Date()) return `Tasting from ${escapeHtml(dateLabel)} <span class="muted">· expired</span>`;
+  return `Tasting from ${escapeHtml(dateLabel)}`;
 }
 
 function guestActivityCardHTML(m) {
