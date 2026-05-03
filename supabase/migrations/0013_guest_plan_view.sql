@@ -133,7 +133,12 @@ grant execute on function cellar27_share_get_planned_flight(text) to anon, authe
 --    table refs as 0011.
 ------------------------------------------------------------
 
-create or replace function cellar27_share_list_bottles(p_token text)
+-- Postgres won't let CREATE OR REPLACE change a function's return type
+-- (the OUT parameter list is part of the signature). Drop the prior
+-- definition first so the new one with `details jsonb` can take.
+drop function if exists cellar27_share_list_bottles(text);
+
+create function cellar27_share_list_bottles(p_token text)
 returns table (
   id                 uuid,
   producer           text,
