@@ -1294,3 +1294,22 @@ body.guest-mode .topbar .userbox { display: none; }
   display: grid;
   gap: 0.5rem;
 }
+
+/* Original ask block on planned flight detail */
+.planned-intent {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-left: 4px solid var(--highlight);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+}
+.planned-intent h3 {
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--highlight);
+  margin: 0 0 0.4rem;
+  font-weight: 600;
+}
+.planned-intent p { margin: 0.2rem 0; }

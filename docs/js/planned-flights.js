@@ -34,6 +34,11 @@ export async function createPlannedFlight(row) {
     food: row.food || null,
     prep: row.prep || null,
     user_notes: row.user_notes || null,
+    // Original ask captured at save time — never overwritten by AI
+    // enrichment. Surfaces in the detail UI and flows through to the
+    // flight_plan AI prompt so the model honors it.
+    food_hint:  row.food_hint  || null,
+    notes_hint: row.notes_hint || null,
   };
   const { data, error } = await sb.from('planned_flights').insert(insert).select().single();
   if (error) throw error;
@@ -68,6 +73,11 @@ export async function requestFlightPlanEnrichment(plan) {
       guests: plan.guests,
       narrative: plan.narrative,
       picks: plan.picks,
+      // Carry the original ask through to the watcher prompt so the
+      // model anchors its food/prep suggestions on it instead of
+      // generating generics.
+      food_hint:  plan.food_hint  || null,
+      notes_hint: plan.notes_hint || null,
     },
   });
   const response = await waitForResponse(req.id);

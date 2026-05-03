@@ -98,7 +98,15 @@ Keep the buy suggestion to 2–3 sentences max plus the price range. Don't pad. 
     case 'drink_now':
       body = `Pick 1–3 bottles to drink soon. Prioritize bottles entering or already in peak window over later vintages. Consider quantity (don't recommend the last bottle of a hard-to-replace wine unless asked).`;
       break;
-    case 'flight_plan':
+    case 'flight_plan': {
+      const foodHint  = (ctx.food_hint  || '').trim();
+      const notesHint = (ctx.notes_hint || '').trim();
+      const hintBlock = (foodHint || notesHint) ? `
+
+ORIGINAL ASK — honor these explicitly:${foodHint ? `
+- The host has already named food they're serving: **${foodHint}**. Include it as the FIRST item in your food array, marked with the appropriate kind (meal vs snack), with a short description grounded in how it pairs with the picks. Build your other 2–4 suggestions AROUND it (complementary snacks, contrast meal options, palate cleansers if applicable). Do NOT replace it or omit it.` : ''}${notesHint ? `
+- Honor these constraints from the host: **${notesHint}**. They constrain both food and prep choices.` : ''}` : '';
+
       body = `The user has saved a tasting flight (see ## Saved flight) and wants you to plan the evening around it. Produce two things:
 
 1) **Food** — 3–5 specific suggestions presented as a menu of OPTIONS the user can choose from (not a full multi-course meal to prepare in entirety). Mix meal options and snack options so the user has real choice. Mark each as either a "meal" (a plated course they could build the evening around) or a "snack" (something to nibble between pours or before pour 1). Each item is independent — the user will keep what fits and delete the rest. For each give a short name and a one-sentence description that makes the trade-off clear (heavier vs lighter, fussier vs easier, leans into which bottle, etc.).
@@ -110,8 +118,9 @@ Keep the buy suggestion to 2–3 sentences max plus the price range. Don't pad. 
    - glassware: type per bottle (Burgundy, Bordeaux, white, flute, universal, etc.)
    Plus a "notes" field with anything else (order of service if non-obvious, palate-cleanser, when to pour the snack, etc.).
 
-Use the picks from ## Saved flight — do NOT recommend other bottles. The Recommendations array in the response stays empty.`;
+Use the picks from ## Saved flight — do NOT recommend other bottles. The Recommendations array in the response stays empty.${hintBlock}`;
       break;
+    }
     case 'flight_guest':
       body = `The host has finalized a tasting flight and wants you to write the GUEST-FACING walkthrough — copy the guests will read on a shared link tonight. The host has already settled on the bottles and the food (both shown in ## Saved flight). Produce:
 

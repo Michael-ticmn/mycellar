@@ -404,11 +404,16 @@ async function promoteGuestFlightToPlanned(message) {
   if (ctx.theme) titleBits.push(ctx.theme.replace(/_/g, ' '));
   if (ctx.food)  titleBits.push(`with ${ctx.food}`);
   const saved = await createPlannedFlight({
-    title:     titleBits.join(' · '),
-    theme:     ctx.theme  ?? null,
-    guests:    ctx.guests ?? null,
-    narrative: p.narrative || '',
+    title:      titleBits.join(' · '),
+    theme:      ctx.theme  ?? null,
+    guests:     ctx.guests ?? null,
+    narrative:  p.narrative || '',
     picks,
+    // Carry the guest's original food/notes intent through. Without
+    // this the AI enrichment runs blind and generates generic
+    // suggestions even though the guest asked for something specific.
+    food_hint:  ctx.food  ?? null,
+    notes_hint: ctx.notes ?? null,
   });
   // Fire-and-forget enrichment so the detail page lights up after
   // ~2 minutes without blocking the navigation.
@@ -1453,6 +1458,11 @@ function wireSaveFlight(resultEl, response, context) {
         guests:            context.guests ?? null,
         narrative:         response.narrative || '',
         picks,
+        // Preserve the original food/notes from the flight builder so
+        // the AI enrichment honors them and the detail page can show
+        // the host what they originally asked for.
+        food_hint:         context.food  ?? null,
+        notes_hint:        context.notes ?? null,
       });
       // Fire-and-forget the AI enrichment — the detail page subscribes
       // to the response itself, so we don't have to await it here.
@@ -1868,6 +1878,15 @@ async function renderPlannedDetail(root, plan) {
 
   const enrichmentPending = (plan.food == null && plan.prep == null);
 
+  // Original food/notes intent — captured at save time, preserved
+  // through the AI enrichment so the host always knows what was asked.
+  const intentHTML = (plan.food_hint || plan.notes_hint) ? `
+    <section class="planned-intent">
+      <h3>Original ask</h3>
+      ${plan.food_hint  ? `<p><span class="muted">Food:</span> ${escapeHtml(plan.food_hint)}</p>`  : ''}
+      ${plan.notes_hint ? `<p><span class="muted">Notes:</span> ${escapeHtml(plan.notes_hint)}</p>` : ''}
+    </section>` : '';
+
   const foodHTML = `<section class="planned-food"><h2>Food</h2>
     ${enrichmentPending
       ? '<p class="muted">Sommelier is preparing food suggestions…</p>'
@@ -1895,7 +1914,7 @@ async function renderPlannedDetail(root, plan) {
     <p class="error planned-error" hidden></p>
   </section>`;
 
-  root.innerHTML = headerHTML + narrativeHTML + picksHTML + foodHTML + prepHTML + notesHTML + guestSectionHTML + actionsHTML;
+  root.innerHTML = headerHTML + intentHTML + narrativeHTML + picksHTML + foodHTML + prepHTML + notesHTML + guestSectionHTML + actionsHTML;
 
   wirePlannedDetail(root, plan);
   renderPlannedGuestSection(root, plan);
