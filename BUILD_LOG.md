@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-05-02 (evening) — Guest activity polish + intent preservation (v0.11.1 → v0.12.0)
+
+### Built
+
+Continuation of the same day's guest → host work. Phone testing the v0.11.0 channel surfaced four follow-ups that needed rolling in.
+
+**v0.11.1 — default flight Theme to "Surprise me":** trivial UX fix. "Vertical" was the default and the user almost never wants to default to a deliberate same-wine vertical for a casual evening. Moved "Surprise me" to the top of the dropdown and marked it `selected` on both [`docs/views/flight.html`](docs/views/flight.html) and [`docs/views/guest.html`](docs/views/guest.html). No other changes.
+
+**v0.11.2 — promote guest's flight to a planned flight:** guests successfully sent flight results back to the host (v0.11.0 channel), but the host had no way to actually USE one — the only path to a planned flight was the host's own Save button on their own flight builder. Added a `[data-promote-message-id]` button to every `ai_result` guest_message card where `request_type === 'flight'` (Pair and Sommelier results don't show it — no picks-as-flight semantics). Click handler in `renderGuestActivity` calls a new helper `promoteGuestFlightToPlanned(message)` that mirrors the host's own Save flow: build picks from `payload.recommendations`, auto-title with "From {guest_name} · {theme} · with {food}", `createPlannedFlight()`, navigate to `#/planned/<id>`, fire `requestFlightPlanEnrichment` in the background.
+
+**v0.11.3 — Guest activity persists past share-link expiry, split by kind:** original v0.11.0 query was `listGuestMessages(activeLink.id)` — when the active link expired/was revoked/got replaced by a new one, every guest_message tied to it disappeared from the host view (rows still existed in Postgres, just orphaned in the UI). Two new helpers in [`docs/js/share.js`](docs/js/share.js): `listAllOwnerShareLinks()` and `listAllOwnerGuestMessages()`. RLS already gates by `share_links.owner_user_id = auth.uid()` so direct queries auto-filter to the host's data; no new RPC needed. `renderGuestActivity` rewritten to fetch both, group messages by `share_link_id`, render the active link's group open at the top with prior tastings collapsed under `<details>` elements (date label + revoked/expired status). Within each tasting the messages split into two clearly labeled buckets: "Suggestions sent back" (`ai_result`) and "Event comments" (`pour_note`), instead of the original mixed chronological feed.
+
+**v0.12.0 — preserve food/notes intent end-to-end:** real data-loss bug. Test scenario: guest typed "caviar" in the Food field on the guest flight builder, sent the result to the host, host clicked "Save as planned flight" — caviar vanished. Root cause was three drops:
+1. `promoteGuestFlightToPlanned` only forwarded title/theme/guests/picks/narrative when calling `createPlannedFlight`. `ctx.food` and `ctx.notes` from the message payload were dropped.
+2. The host's own `wireSaveFlight` flow had the same drop — food/notes captured in the flight builder context were never passed to `createPlannedFlight`.
+3. Even if they had been forwarded, the planned_flights schema had nowhere to put them. The `food` jsonb column is the AI-generated array (and gets overwritten on enrichment); the `prep.notes` is owner notes about prep, not about the original ask.
+
+Fix in three coordinated changes:
+- New SQL migration [`0015_planned_flight_intent.sql`](supabase/migrations/0015_planned_flight_intent.sql): adds two nullable text columns to `planned_flights` — `food_hint` and `notes_hint`. Captured at save time. Never overwritten by AI enrichment (the enrichment writes to `food`/`prep`, not the hints).
+- Client wiring: `createPlannedFlight` accepts both new fields; `requestFlightPlanEnrichment` includes them in the watcher context; both `wireSaveFlight` and `promoteGuestFlightToPlanned` pull `food`/`notes` from their respective contexts and pass them as `food_hint` / `notes_hint`. Detail page renders an "Original ask" block above the editable food/prep so the host always sees what was originally asked, even after editing.
+- Watcher [`watcher/src/render.js`](watcher/src/render.js): `flight_plan` task body builds a conditional ORIGINAL ASK block from `ctx.food_hint` / `ctx.notes_hint`. Tells the model to include the food_hint as the FIRST item in its `food` array (with appropriate kind + a pairing-grounded description grounded in the actual picks) and to honor notes_hint as a constraint on both food and prep. Without hints the prompt behaves exactly as v0.11.x did.
+
+### Decisions
+
+- **Two new columns instead of stashing intent in jsonb**: `food_hint`/`notes_hint` are first-class queryable text. Putting them inside the existing `food` or `prep` jsonb would either (a) get overwritten by AI enrichment or (b) blur the line between "user asked for X" and "AI suggested X." Cheap migration, much clearer model.
+- **Pre-seed via prompt, not via insert**: I considered seeding `food: [{kind:'meal', name:'caviar', description:'From original ask'}]` on `createPlannedFlight` so the row had something visible immediately. Rejected because the AI enrichment OVERWRITES `food` with its returned array — the seeded item would vanish two minutes later. Better to let the AI return the full curated list (including caviar as the first item) so the suggestions are coherent. The "Original ask" block on the detail page covers the immediate-visibility need without conflicting with enrichment.
+- **Save-as-planned button only on flight results**: Pair has 1–2 picks for a specific dish (not a tasting), Sommelier picks 1–3 for "drink soon" — neither has the picks-as-flight semantics that the planned_flights schema represents. Rather than try to coerce them, the button is conditioned on `p.request_type === 'flight' && recs.length > 0`.
+- **All-history grouping over a separate "Archive" tab**: simpler navigation. Active tasting expanded at top is what the host wants 95% of the time; collapsed older tastings stay one click away without a second view to maintain.
+
+### Validation
+
+- Owner applied 0014 + 0015 in sequence on 2026-05-02; both succeeded clean. Watcher restarted twice during the session (latest PID 26808 with the v0.12.0 prompt block).
+- Caught one Postgres-specific gotcha during 0013 (CREATE OR REPLACE can't change a function's return type) — fixed and shipped that patch. 0015 is just `add column if not exists`, no analogous risk.
+- All touched JS files (`app.js`, `planned-flights.js`, `share.js`) syntax-check clean. Bundle grew from ~84 KB at v0.11.0 to ~88 KB at v0.12.0 — within reason.
+- End-to-end caviar test path is queued for the next phone session: build a flight as guest with Food=caviar, send to host, host promotes, confirm the "Original ask" block reads "Food: caviar" and the AI's food array opens with caviar.
+
+### Next
+
+User testing the caviar scenario. If the AI sometimes drops the food_hint anyway (despite the prompt), the next iteration would be to client-side enforce — append the hint as the first food item if it's missing from the AI response, rather than relying on the model to follow the instruction. Don't ship that pre-emptively; let the prompt-only version run a few real evenings first.
+
+---
+
 ## 2026-05-02 — guest plan polish + guest → host channel (v0.10.1 → v0.11.0)
 
 ### Built
