@@ -227,6 +227,29 @@ async function renderGuestActivity(link) {
     return;
   }
   list.innerHTML = messages.map((m) => guestActivityCardHTML(m)).join('');
+  // Wire each "Save as planned flight" button to its source message.
+  const byId = new Map(messages.map((m) => [m.id, m]));
+  $$('[data-promote-message-id]', list).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const message = byId.get(btn.dataset.promoteMessageId);
+      if (!message) return;
+      const errEl = btn.parentElement?.querySelector('.guest-activity-error');
+      const showErr = (msg) => { if (!errEl) return; errEl.hidden = !msg; errEl.textContent = msg || ''; };
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = 'Saving…';
+      showErr('');
+      try {
+        await promoteGuestFlightToPlanned(message);
+        // Navigation handled inside promote helper; if we get here without
+        // a redirect for any reason, restore the button.
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = original;
+        showErr(err.message);
+      }
+    });
+  });
 }
 
 function guestActivityCardHTML(m) {
@@ -262,6 +285,17 @@ function guestActivityCardHTML(m) {
   const narrative = p.narrative
     ? narrativeBlockHTML(p.narrative, { heading: 'Narrative', headingTag: 'h4' })
     : '';
+  // Only flight results can be promoted to a planned flight — pairings
+  // and drink-now don't have the picks-as-flight semantics. The button
+  // mirrors the host's own "Save this flight" flow on the flight
+  // builder result panel.
+  const canPlan = p.request_type === 'flight' && recs.length > 0;
+  const planBtn = canPlan
+    ? `<div class="guest-activity-actions">
+        <button type="button" data-promote-message-id="${escapeAttr(m.id)}">Save as planned flight</button>
+        <p class="error guest-activity-error" hidden></p>
+      </div>`
+    : '';
   return `<article class="guest-activity-card" data-kind="ai_result">
     <header class="guest-activity-head">
       <span class="guest-activity-kind">${escapeHtml(reqType)}</span>
@@ -271,7 +305,41 @@ function guestActivityCardHTML(m) {
     ${ctxBits ? `<p class="muted">${ctxBits}</p>` : ''}
     ${narrative}
     ${recList}
+    ${planBtn}
   </article>`;
+}
+
+// Owner clicked "Save as planned flight" on a guest-shared flight
+// result. Same flow as the host's own Save button on the flight
+// builder: persist immediately so the row exists even if the AI
+// enrichment fails, navigate to the detail page, fire the flight_plan
+// enrichment in the background. Title carries the guest's name so the
+// host can tell at a glance which guest's flight it was.
+async function promoteGuestFlightToPlanned(message) {
+  const p = message.payload || {};
+  const ctx = p.context || {};
+  const picks = (p.recommendations || []).map((r) => ({
+    bottle_id:  r.bottle_id,
+    confidence: r.confidence || null,
+    reasoning:  r.reasoning  || null,
+  }));
+  const guestLabel = message.guest_name || 'a guest';
+  const titleBits = [`From ${guestLabel}`];
+  if (ctx.theme) titleBits.push(ctx.theme.replace(/_/g, ' '));
+  if (ctx.food)  titleBits.push(`with ${ctx.food}`);
+  const saved = await createPlannedFlight({
+    title:     titleBits.join(' · '),
+    theme:     ctx.theme  ?? null,
+    guests:    ctx.guests ?? null,
+    narrative: p.narrative || '',
+    picks,
+  });
+  // Fire-and-forget enrichment so the detail page lights up after
+  // ~2 minutes without blocking the navigation.
+  requestFlightPlanEnrichment(saved).catch((err) => {
+    console.error('flight_plan enrichment from guest message failed:', err);
+  });
+  location.hash = `#/planned/${saved.id}`;
 }
 
 // Compact one-line summary of the request context — what the guest

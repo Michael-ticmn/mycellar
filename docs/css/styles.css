@@ -1232,3 +1232,12 @@ body.guest-mode .topbar .userbox { display: none; }
   line-height: 1;
   box-shadow: 0 0 0 2px var(--surface);
 }
+
+.guest-activity-actions {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.guest-activity-error { margin: 0; }
