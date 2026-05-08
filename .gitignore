@@ -20,3 +20,10 @@ watcher/watcher.err.log
 Thumbs.db
 .vscode/
 .idea/
+
+# Private planning docs — kept on local disk, not pushed to GitHub.
+STRATEGY.md
+BUILD_SPEC.md
+BUILD_LOG.md
+CURRENT_STATE.md
+HANDOFF_QUEUE.md
