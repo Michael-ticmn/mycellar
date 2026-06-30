@@ -2225,6 +2225,7 @@ async function mountDrinkNow() {
   const buckets = { past: [], peak: [], entering: [] };
   for (const b of bottles) {
     if (b.drink_window_start == null || b.drink_window_end == null) continue;
+    if ((b.quantity ?? 0) <= 0) continue; // don't flag bottles you no longer have on hand
     if (yr > b.drink_window_end) buckets.past.push(b);
     else if (yr >= b.drink_window_start) buckets.peak.push(b);
     else if (yr === b.drink_window_start - 1) buckets.entering.push(b);
