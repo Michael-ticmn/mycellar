@@ -1189,6 +1189,20 @@ body.guest-mode .topbar .userbox { display: none; }
 }
 .guest-activity-who { font-weight: 500; }
 .guest-activity-ts { margin-left: auto; }
+.guest-activity-delete {
+  align-self: center;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.guest-activity-delete:hover {
+  background: var(--surface-2);
+  color: var(--error);
+}
 .guest-activity-note {
   margin: 0;
   padding: 0.5rem 0.75rem;

@@ -78,6 +78,14 @@ export async function listAllOwnerGuestMessages() {
   return data || [];
 }
 
+// Owner-side: delete a single guest message. RLS (0015) gates the delete
+// to messages hanging off one of the caller's own share links, so we can
+// issue a plain delete-by-id.
+export async function deleteGuestMessage(id) {
+  const { error } = await sb.from('guest_messages').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // Owner-side helper used by the nav badge: how many messages have
 // landed on this owner's currently-active share link since `since`
 // (an ISO timestamp from localStorage). Tolerant of no-active-link

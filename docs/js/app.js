@@ -19,7 +19,7 @@ import {
   requestFlightExtrasForShare, requestDrinkNowForShare,
   getSharedPlannedFlight, sendGuestMessage,
 } from './guest.js';
-import { getActiveShareLink, createShareLink, revokeShareLink, shareUrlFor, listGuestMessages, countGuestMessagesSince, listAllOwnerShareLinks, listAllOwnerGuestMessages } from './share.js';
+import { getActiveShareLink, createShareLink, revokeShareLink, shareUrlFor, listGuestMessages, countGuestMessagesSince, listAllOwnerShareLinks, listAllOwnerGuestMessages, deleteGuestMessage } from './share.js';
 
 const STYLES = [
   'light_red','medium_red','full_red',
@@ -274,6 +274,28 @@ async function renderGuestActivity(activeLink) {
       }
     });
   });
+
+  // Wire per-card delete buttons. On success, re-render the whole feed so
+  // group counts (and any now-empty buckets/sessions) update correctly.
+  $$('[data-delete-message-id]', list).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.deleteMessageId;
+      const message = messagesById.get(id);
+      const label = message?.guest_name ? `${message.guest_name}'s ` : 'this ';
+      if (!confirm(`Delete ${label}guest activity? This can't be undone.`)) return;
+      const card = btn.closest('.guest-activity-card');
+      btn.disabled = true;
+      try {
+        await deleteGuestMessage(id);
+        await renderGuestActivity(activeLink);
+      } catch (err) {
+        btn.disabled = false;
+        const errEl = card?.querySelector('.guest-activity-error');
+        if (errEl) { errEl.hidden = false; errEl.textContent = err.message; }
+        else alert(err.message);
+      }
+    });
+  });
 }
 
 // One tasting session: all messages tied to a single share link, split
@@ -333,6 +355,9 @@ function guestActivityCardHTML(m) {
   const ts = when.toLocaleString('en-US',
     { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const who = m.guest_name ? escapeHtml(m.guest_name) : '<span class="muted">(unnamed guest)</span>';
+  // Host-only control to prune a single guest activity item. Sits at the far
+  // right of every card header (margin-left:auto in CSS).
+  const delBtn = `<button type="button" class="guest-activity-delete" data-delete-message-id="${escapeAttr(m.id)}" title="Delete this activity" aria-label="Delete this activity">✕</button>`;
   if (m.kind === 'pour_note') {
     const p   = m.payload || {};
     const link = p.planned_flight_id ? `#/planned/${p.planned_flight_id}` : '#';
@@ -341,6 +366,7 @@ function guestActivityCardHTML(m) {
         <span class="guest-activity-kind">Pour note</span>
         <span class="guest-activity-who">${who}</span>
         <span class="guest-activity-ts muted">${escapeHtml(ts)}</span>
+        ${delBtn}
       </header>
       <p class="guest-activity-note">${escapeHtml(p.note || '')}</p>
       <p class="muted"><a href="${escapeAttr(link)}">Open the planned flight ↗</a></p>
@@ -377,6 +403,7 @@ function guestActivityCardHTML(m) {
       <span class="guest-activity-kind">${escapeHtml(reqType)}</span>
       <span class="guest-activity-who">${who}</span>
       <span class="guest-activity-ts muted">${escapeHtml(ts)}</span>
+      ${delBtn}
     </header>
     ${ctxBits ? `<p class="muted">${ctxBits}</p>` : ''}
     ${narrative}
