@@ -28,13 +28,23 @@ export async function createBottle(input) {
   let { drink_window_start, drink_window_end } = input;
 
   if (!userOverrode && input.vintage) {
-    const { start, end } = suggestDrinkWindow({
-      varietal: input.varietal,
-      style: input.style,
-      vintage: input.vintage,
-    });
-    drink_window_start = start;
-    drink_window_end = end;
+    // Prefer the sommelier's structured window (from enrichment) when present —
+    // it's wine-specific and keeps the columns consistent with the rationale.
+    // Fall back to the generic varietal/style lookup otherwise.
+    const aiStart = Number.isInteger(input.details?.drink_window_start) ? input.details.drink_window_start : null;
+    const aiEnd   = Number.isInteger(input.details?.drink_window_end)   ? input.details.drink_window_end   : null;
+    if (aiStart && aiEnd && aiEnd >= aiStart) {
+      drink_window_start = aiStart;
+      drink_window_end = aiEnd;
+    } else {
+      const { start, end } = suggestDrinkWindow({
+        varietal: input.varietal,
+        style: input.style,
+        vintage: input.vintage,
+      });
+      drink_window_start = start;
+      drink_window_end = end;
+    }
   }
 
   const row = {
@@ -55,6 +65,27 @@ export async function updateBottle(id, patch) {
   const touchesWindow = 'drink_window_start' in patch || 'drink_window_end' in patch;
   const finalPatch = touchesWindow ? { ...patch, drink_window_overridden: true } : patch;
   const { data, error } = await sb.from('bottles').update(finalPatch).eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+// Store sommelier enrichment. The enrichment carries a structured drink window
+// (details.drink_window_start/end); promote it into the canonical columns so the
+// numeric window the app sorts/badges on matches the prose rationale. Never
+// clobber a window the user set by hand (drink_window_overridden), and never flip
+// the override flag — this is an auto value, not a manual one.
+export async function saveEnrichment(id, details) {
+  const patch = { details };
+  const s = Number.isInteger(details?.drink_window_start) ? details.drink_window_start : null;
+  const e = Number.isInteger(details?.drink_window_end)   ? details.drink_window_end   : null;
+  if (s && e && e >= s) {
+    const current = await getBottle(id);
+    if (!current.drink_window_overridden) {
+      patch.drink_window_start = s;
+      patch.drink_window_end = e;
+    }
+  }
+  const { data, error } = await sb.from('bottles').update(patch).eq('id', id).select().single();
   if (error) throw error;
   return data;
 }

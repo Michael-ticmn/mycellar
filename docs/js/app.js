@@ -1,5 +1,5 @@
 import { getSession, signIn, signUp, onAuthChange } from './auth.js';
-import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, updateBottle, findDuplicate } from './bottles.js';
+import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, updateBottle, saveEnrichment, findDuplicate } from './bottles.js';
 import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
 import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } from './pairings.js';
 import {
@@ -1245,7 +1245,7 @@ async function autoEnrich(bottleId) {
     const response = await requestEnrichment(bottleId);
     const details = response.extracted?.details || response.extracted || null;
     if (details) {
-      await updateBottle(bottleId, { details });
+      await saveEnrichment(bottleId, details);
     } else {
       enrichFailures.set(bottleId, 'No details returned by sommelier.');
     }
@@ -2764,7 +2764,7 @@ function wireBottleDetail(root, bottle) {
         const response = await requestEnrichment(bottle.id);
         const details = response.extracted?.details || response.extracted || null;
         if (details) {
-          await updateBottle(bottle.id, { details });
+          await saveEnrichment(bottle.id, details);
           render();
         } else {
           alert('No details returned.');

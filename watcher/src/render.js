@@ -389,11 +389,11 @@ respond_to: ${respondToPath}
 
   let task;
   if (row.intent === 'add') {
-    task = `Extract structured wine metadata from the label image(s) AND produce rich enrichment (tasting notes, food pairings, producer background, drinking window rationale, serving recommendations). Use the back label if provided — it usually has tech sheet info (alcohol, blend %, winemaker notes). Be honest about extraction confidence: if a field isn't visible, return null. Enrichment may draw on your knowledge of the producer/region but should align with what the labels actually show.`;
+    task = `Extract structured wine metadata from the label image(s) AND produce rich enrichment (tasting notes, food pairings, producer background, drinking window rationale + explicit start/end years, serving recommendations). Use the back label if provided — it usually has tech sheet info (alcohol, blend %, winemaker notes). Be honest about extraction confidence: if a field isn't visible, return null. Enrichment may draw on your knowledge of the producer/region but should align with what the labels actually show.`;
   } else if (row.intent === 'pour') {
     task = `Identify the bottle in the image(s) and match it to a row in the cellar table above. If multiple cellar rows could match, return all candidates with confidences. Use both front and back labels if provided.`;
   } else if (row.intent === 'enrich') {
-    task = `Produce rich enrichment for the bottle described in "Bottle to enrich". Include tasting notes, food pairings, producer background, drinking window rationale, and serving recommendations. Use your knowledge of the producer/region/varietal.`;
+    task = `Produce rich enrichment for the bottle described in "Bottle to enrich". Include tasting notes, food pairings, producer background, drinking window rationale + explicit start/end years, and serving recommendations. Use your knowledge of the producer/region/varietal.`;
   } else {
     task = `Unknown intent: ${row.intent}`;
   }
@@ -460,9 +460,21 @@ completed: <ISO timestamp>
   "producer_background": "...",
   "region_context": "...",
   "drinking_window_rationale": "...",
+  "drink_window_start": 2026,
+  "drink_window_end": 2030,
   "serving": { "temp_celsius": 16, "decant_minutes": 30, "glass": "..." }
 }
 \`\`\`
+
+\`drink_window_start\`/\`drink_window_end\` are the canonical drink window and MUST be
+actual calendar years (e.g. 2026, 2030), derived from the wine's vintage — not
+offsets. They are the single source of truth the app stores, so the years you cite
+in \`drinking_window_rationale\` MUST match them exactly (if the rationale says "drink
+through 2030", then \`drink_window_end\` is 2030). \`start\` = the first year you'd
+recommend drinking (the vintage year itself if it's ready on release; a later year if
+it needs bottle age); \`end\` = the last year to drink through. Base these on the
+specific wine — its tier, structure, and varietal aging potential — not a generic
+rule of thumb. If the wine has no vintage (non-vintage), set both to null.
 
 ## Narrative
 <markdown — what you see on the label(s), what was hard to read, the thoughtful summary>

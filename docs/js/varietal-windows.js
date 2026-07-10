@@ -19,6 +19,11 @@ export const VARIETAL_WINDOWS = {
   'Sangiovese':           { years_after_vintage: [3, 12], peak: [5, 10] },
   'Nebbiolo':             { years_after_vintage: [5, 25], peak: [10, 20] },
   'Barbera':              { years_after_vintage: [2, 7],  peak: [3, 5]  }, // TODO confirm
+  'Montepulciano':        { years_after_vintage: [2, 10], peak: [3, 7]  }, // Riserva ages longer
+  'Primitivo':            { years_after_vintage: [1, 6],  peak: [2, 4]  }, // fruit-forward, drink youngish
+  'Petit Verdot':         { years_after_vintage: [3, 12], peak: [5, 10] }, // high tannin/pigment
+  'Alicante Bouschet':    { years_after_vintage: [2, 10], peak: [4, 8]  },
+  'Durif':                { years_after_vintage: [3, 15], peak: [6, 12] }, // = Petite Sirah
   'Grenache':             { years_after_vintage: [2, 10], peak: [4, 8]  },
   'Mourvèdre':            { years_after_vintage: [3, 12], peak: [5, 10] }, // TODO confirm
   'Cabernet Franc':       { years_after_vintage: [3, 12], peak: [5, 9]  }, // TODO confirm
@@ -39,6 +44,8 @@ export const VARIETAL_WINDOWS = {
   'Gewürztraminer':       { years_after_vintage: [1, 5],  peak: [2, 4]  }, // TODO confirm
   'Viognier':             { years_after_vintage: [1, 4],  peak: [1, 3]  }, // TODO confirm
   'Albariño':             { years_after_vintage: [0, 3],  peak: [1, 2]  },
+  'Nascetta':             { years_after_vintage: [1, 8],  peak: [3, 7]  }, // Langhe white: drinks young, rewards age
+  'Fiano':                { years_after_vintage: [1, 6],  peak: [2, 4]  }, // coastal styles fresher; Avellino ages
   'Grüner Veltliner':     { years_after_vintage: [1, 6],  peak: [2, 4]  }, // TODO confirm
   'Sémillon':             { years_after_vintage: [2, 10], peak: [4, 8]  }, // TODO confirm
   'White Blend':          { years_after_vintage: [0, 4],  peak: [1, 3]  }, // generic fallback
@@ -50,6 +57,8 @@ export const VARIETAL_WINDOWS = {
   'Champagne':            { years_after_vintage: [2, 15], peak: [4, 10] },
   'Champagne (Vintage)':  { years_after_vintage: [5, 25], peak: [8, 18] },
   'Prosecco':             { years_after_vintage: [0, 2],  peak: [0, 1]  },
+  'Glera':                { years_after_vintage: [0, 2],  peak: [0, 1]  }, // Prosecco grape
+  'Moscato Bianco':       { years_after_vintage: [0, 2],  peak: [0, 1]  }, // Moscato d'Asti — drink young
   'Cava':                 { years_after_vintage: [1, 5],  peak: [1, 3]  }, // TODO confirm
   'Sparkling':            { years_after_vintage: [1, 5],  peak: [2, 4]  }, // generic fallback
 
