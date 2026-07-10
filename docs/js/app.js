@@ -1038,6 +1038,10 @@ async function mountCellar() {
   let bottles;
   try { bottles = await listBottles(); }
   catch (e) { grid.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`; return; }
+  // The cellar shows only what's on hand. Poured-out bottles (quantity 0) are
+  // kept in the DB — history, guest snapshots, re-adding later — just hidden
+  // from the grid, its counts, filters, and search.
+  bottles = bottles.filter((b) => (b.quantity ?? 0) > 0);
   if (!bottles.length) {
     grid.innerHTML = '<p class="muted">Empty cellar. <a href="#/scan">Scan a bottle →</a> or <a href="#/add">add manually</a>.</p>';
     return;
