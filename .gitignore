@@ -11,9 +11,11 @@ docs/config.local.js
 **/npm-debug.log*
 **/yarn-debug.log*
 
-# Watcher runtime logs
-watcher/watcher.out.log
-watcher/watcher.err.log
+# Watcher runtime logs — glob, not exact names, so rotated/backup copies
+# (watcher.out.log.20260801-175058.bak) can't slip in. They contain absolute
+# local paths and the machine hostname.
+watcher/watcher.out.log*
+watcher/watcher.err.log*
 
 # OS / editor
 .DS_Store

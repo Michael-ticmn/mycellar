@@ -21,8 +21,11 @@ const sb = createClient(CONFIG.supabaseUrl, CONFIG.supabaseServiceKey, {
 });
 
 // Track resources for graceful shutdown + per-channel reconnect state.
-// channels: name → most recent channel handle (replaced on reconnect).
-// reconnect: name → { attempts, timer } so we can back off and cancel cleanly.
+// channels: name → the CURRENT channel handle. Doubles as an identity check —
+//   status callbacks from a handle that is no longer the current one are
+//   ignored, so our own unsubscribe()-induced CLOSED can't look like a drop.
+// reconnect: name → { attempts, timer }, created once per name and never
+//   replaced, so there is exactly one reconnect chain per channel.
 const channels = new Map();
 const reconnect = new Map();
 let responsesWatcher = null;
@@ -77,13 +80,26 @@ async function sweepStaleRequests() {
 
 function subscribeChannel(name) {
   const table = CHANNEL_DEFS[name];
+
+  // Any pending reconnect for this name is moot — we're subscribing right now.
+  // Clearing it stops an orphaned timer from firing later and tearing down the
+  // channel we're about to create.
+  clearReconnectTimer(name);
+
   // Drop any previous channel with the same name before replacing the ref —
   // realtime tracks subs by name; leaving the old one connected wastes a slot
   // and produces duplicate INSERT events during the brief overlap.
+  //
+  // Clear the ref BEFORE unsubscribing: unsubscribe() emits CLOSED on the prior
+  // handle, and onChannelStatus ignores status from any non-current channel.
+  // Without that ordering, our own teardown looks like a drop and schedules
+  // another reconnect — which tears down the next channel, forever.
   const prior = channels.get(name);
+  channels.delete(name);
   if (prior) {
     try { prior.unsubscribe(); } catch { /* best-effort */ }
   }
+
   const ch = sb.channel(name)
     .on('postgres_changes',
       { event: 'INSERT', schema: 'public', table },
@@ -91,9 +107,11 @@ function subscribeChannel(name) {
         if (row.status !== 'pending') return;
         try { await pickUp(table, row); }
         catch (e) { err(`${name} pickUp:`, e); await markError(table, row.id, String(e?.message || e)); }
-      })
-    .subscribe((status) => onChannelStatus(name, status));
+      });
+  // Register as current before subscribing, so a synchronously-delivered
+  // SUBSCRIBED isn't mistaken for a stale channel's callback.
   channels.set(name, ch);
+  ch.subscribe((status) => onChannelStatus(name, ch, status));
 }
 
 function subscribePairingRequests() { subscribeChannel('pairing-requests'); }
@@ -105,18 +123,28 @@ function subscribeScanRequests()    { subscribeChannel('scan-requests'); }
 // place with exponential backoff instead, and on successful re-subscribe
 // run a stale-pending sweep so we catch any INSERTs that fired during
 // the dead window (realtime doesn't replay missed events).
-function onChannelStatus(name, status) {
+function onChannelStatus(name, ch, status) {
+  // Ignore status from a channel we've already replaced. Our own
+  // subscribeChannel() unsubscribes the prior handle, which emits CLOSED;
+  // treating that as a drop is what made reconnects self-sustaining. Stale
+  // handles left inside supabase-js get filtered here too.
+  if (channels.get(name) !== ch) return;
+
   log(`${name} channel:`, status);
   if (status === 'SUBSCRIBED') {
     const state = reconnect.get(name);
-    if (state) {
+    if (state?.attempts) {
       log(`${name} reconnected after ${state.attempts} attempt(s); sweeping stale pending`);
-      reconnect.delete(name);
       // Catch up on anything inserted while the channel was down. We sweep
       // only this channel's table, not all of them, so a flapping channel
       // doesn't cause O(N) sweeps elsewhere.
       sweepTable(CHANNEL_DEFS[name]).catch((e) => err(`reconnect sweep ${name}:`, e));
     }
+    // Reset the backoff but KEEP the entry. Deleting it would hide a still-
+    // pending timer from scheduleReconnect's debounce, letting a second
+    // independent reconnect chain start — that's how one loop became 14.
+    clearReconnectTimer(name);
+    if (state) state.attempts = 0;
     return;
   }
   if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
@@ -124,8 +152,27 @@ function onChannelStatus(name, status) {
   }
 }
 
+// Single state object per channel name, created once and never replaced, so
+// there is exactly one reconnect chain per channel for the process lifetime.
+function reconnectState(name) {
+  let state = reconnect.get(name);
+  if (!state) {
+    state = { attempts: 0, timer: null };
+    reconnect.set(name, state);
+  }
+  return state;
+}
+
+function clearReconnectTimer(name) {
+  const state = reconnect.get(name);
+  if (state?.timer) {
+    clearTimeout(state.timer);
+    state.timer = null;
+  }
+}
+
 function scheduleReconnect(name) {
-  const state = reconnect.get(name) || { attempts: 0, timer: null };
+  const state = reconnectState(name);
   if (state.timer) return; // already scheduled — debounce repeated status callbacks
   state.attempts += 1;
   // 2, 4, 8, 16, 32, 60, 60, … (capped at 60s)
@@ -133,14 +180,12 @@ function scheduleReconnect(name) {
   err(`${name} dropped; reconnect attempt ${state.attempts} in ${delay / 1000}s`);
   state.timer = setTimeout(() => {
     state.timer = null;
-    reconnect.set(name, state);
     try { subscribeChannel(name); }
     catch (e) {
       err(`${name} resubscribe threw:`, e);
       scheduleReconnect(name);
     }
   }, delay);
-  reconnect.set(name, state);
 }
 
 async function pickUp(table, row) {
