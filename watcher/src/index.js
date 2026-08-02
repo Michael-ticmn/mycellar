@@ -16,6 +16,60 @@ const err = (...args) => console.error(new Date().toISOString(), ...args);
 
 const HOST = hostname();
 
+// ───────────────────────── error logging ─────────────────────────
+
+// Network-level failures (DNS, connect timeout, socket reset) are weather, not
+// bugs: during an internet outage every timer tick fails identically and the
+// full multi-line fetch stack says nothing new. A 6-hour outage on 2026-08-02
+// wrote 1,494 lines of duplicate ENOTFOUND / ConnectTimeoutError traces and
+// buried everything else. Collapse consecutive network failures per operation
+// to one line, then one line on recovery. Non-network errors still log in full
+// — those are real and each one may differ.
+const NETWORK_ERROR_RE =
+  /fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ENETDOWN|EHOSTUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET/i;
+
+function isNetworkError(error) {
+  if (!error) return false;
+  return NETWORK_ERROR_RE.test(
+    `${error.message || ''} ${error.details || ''} ${error.code || ''}`);
+}
+
+// Pull the most informative single line out of a nested fetch error. Supabase
+// wraps the real cause ("getaddrinfo ENOTFOUND …") several lines down under
+// "Caused by:", so prefer that over the generic "TypeError: fetch failed".
+function briefCause(error) {
+  const text = String(error?.details || error?.message || error || '');
+  const lines = text.split('\n').map((s) => s.trim()).filter(Boolean);
+  const caused = lines.find((s) => s.startsWith('Caused by:'));
+  return (caused || lines[0] || 'unknown').replace(/^Caused by:\s*/, '').slice(0, 160);
+}
+
+// key → count of consecutive suppressed network failures for that operation.
+const netFailures = new Map();
+
+function logOpError(key, error) {
+  if (!isNetworkError(error)) {
+    netFailures.delete(key);
+    err(`${key}:`, error);
+    return;
+  }
+  const n = (netFailures.get(key) || 0) + 1;
+  netFailures.set(key, n);
+  if (n === 1) {
+    err(`${key}: network unreachable (${briefCause(error)}) — suppressing repeats until it recovers`);
+  }
+}
+
+// Call after an operation succeeds, so the next outage reports fresh and we
+// get a durable record of how long the last one lasted.
+function clearOpError(key) {
+  const n = netFailures.get(key);
+  if (n) {
+    netFailures.delete(key);
+    log(`${key}: network recovered after ${n} failed attempt(s)`);
+  }
+}
+
 const sb = createClient(CONFIG.supabaseUrl, CONFIG.supabaseServiceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -63,7 +117,8 @@ async function ensureDirs() {
 // landed during a connection gap stays pending forever without this.
 async function sweepTable(table) {
   const { data, error } = await sb.from(table).select('*').eq('status', 'pending');
-  if (error) { err(`sweep ${table}:`, error); return; }
+  if (error) { logOpError(`sweep ${table}`, error); return; }
+  clearOpError(`sweep ${table}`);
   for (const row of data || []) {
     log(`sweep: picking up stale ${table}.${row.id}`);
     try { await pickUp(table, row); }
@@ -440,7 +495,8 @@ async function sweepStaleClaims() {
     p_timeout_minutes: CONFIG.timeoutMinutes,
     p_max_retries: 2,
   });
-  if (error) { err('sweep_stale_claims:', error); return; }
+  if (error) { logOpError('sweep_stale_claims', error); return; }
+  clearOpError('sweep_stale_claims');
   for (const row of data || []) {
     log(`sweep ${row.action}: ${row.table_name}.${row.request_id}`);
     if (row.action !== 'retry') continue;
