@@ -13,9 +13,9 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
+    "@supabase/supabase-js": "^2.111.0",
     "chokidar": "^3.6.0",
     "dotenv": "^16.4.5",
-    "nodemailer": "^8.0.7"
+    "nodemailer": "^9.0.3"
   }
 }
