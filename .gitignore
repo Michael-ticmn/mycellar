@@ -22,6 +22,12 @@ watcher/watcher.err.log*
 cellar27-backups/
 *-backup/
 
+# Headless-browser debugging output. A `git add -A` swept four of these in
+# once; they're generated at the repo root when a test run's cwd lands here.
+dom_*.html
+dom_*.log
+chrome*.log
+
 # OS / editor
 .DS_Store
 Thumbs.db
