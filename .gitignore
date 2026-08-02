@@ -24,6 +24,9 @@ Thumbs.db
 .idea/
 
 # Private planning docs — kept on local disk, not pushed to GitHub.
+# REVIEW_FINDINGS.md is an unpatched-issue register for a live deployment;
+# it stays local until everything in it is fixed.
+REVIEW_FINDINGS.md
 STRATEGY.md
 BUILD_SPEC.md
 BUILD_LOG.md
