@@ -1357,3 +1357,52 @@ body.guest-mode .topbar .userbox { display: none; }
   font-weight: 600;
 }
 .planned-intent p { margin: 0.2rem 0; }
+
+/* ── Choice dialog (confirm() replacement) ───────────────────────── */
+.choice-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.6);
+}
+.choice-card {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  max-width: 26rem; width: 100%;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.choice-card h2 { margin: 0 0 0.5rem; font-family: var(--serif); font-size: 1.3rem; }
+.choice-card p { margin: 0 0 1rem; }
+/* Stacked, full-width: these are distinct choices, not a yes/no pair, and on a
+   phone a row of three would truncate the labels that carry the meaning. */
+.choice-actions { display: flex; flex-direction: column; gap: 0.5rem; }
+.choice-actions button { width: 100%; }
+
+/* Restored-result note where the Save button used to be. */
+.save-flight-stale { margin-top: 1rem; font-size: 0.9rem; }
+
+/* Autosave acknowledgement on the planned-flight page. */
+.planned-saved { display: inline-block; min-height: 1.2em; font-size: 0.85rem; }
+
+/* Guest label photo placeholder while the signed URL is minted. */
+.guest-photo-pending { margin: 0; padding: 1.5rem 0; text-align: center; font-size: 0.9rem; }
+
+/* ── Reduced motion ──────────────────────────────────────────────────
+   The pour loader runs continuously for the length of an AI request, which
+   can be minutes. For anyone who gets motion sick or is distracted by it,
+   that's the longest-lived animation in the app, so honor the OS setting:
+   stop the CSS animations and the SMIL inside the inline SVG, and leave the
+   glass drawn in a static filled state so it still reads as "working".      */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* The pour loader is SMIL, which no CSS rule can stop — the `display`
+     property does not apply to SVG animation elements. pourLoaderHTML()
+     checks this same media query and emits a static glass instead. */
+}
