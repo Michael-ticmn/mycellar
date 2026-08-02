@@ -165,9 +165,24 @@ export async function findDuplicate({ producer, wine_name, vintage, varietal }) 
 //
 // No rows back means the guard rejected it: either the bottle is at zero or it
 // isn't visible to this user. Both read the same way to the person tapping.
+// Migrations are applied by hand, so the frontend can go live before 0018 does.
+// PostgREST answers a call to a function that doesn't exist with PGRST202; when
+// we see that, fall back to the old read-then-write. It carries the lost-update
+// race this change exists to fix, but a race beats a Pour button that just
+// errors. Delete this fallback once 0018 is applied everywhere.
+function isMissingFunction(error) {
+  return error?.code === 'PGRST202'
+    || /Could not find the function|does not exist/i.test(error?.message || '');
+}
+
 export async function pourBottle(id) {
   const { data, error } = await sb.rpc('cellar27_pour_bottle', { p_bottle_id: id });
-  if (error) throw error;
+  if (error) {
+    if (!isMissingFunction(error)) throw error;
+    const b = await getBottle(id);
+    if (b.quantity <= 0) throw new Error('No bottles left to pour');
+    return updateBottle(id, { quantity: b.quantity - 1 });
+  }
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) throw new Error('No bottles left to pour');
   return row;
@@ -175,7 +190,11 @@ export async function pourBottle(id) {
 
 export async function undoPour(id) {
   const { data, error } = await sb.rpc('cellar27_unpour_bottle', { p_bottle_id: id });
-  if (error) throw error;
+  if (error) {
+    if (!isMissingFunction(error)) throw error;
+    const b = await getBottle(id);
+    return updateBottle(id, { quantity: b.quantity + 1 });
+  }
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) throw new Error("Couldn't undo — bottle not found.");
   return row;
