@@ -77,8 +77,32 @@ Read that file. It contains frontmatter (with a respond_to path you must write t
   // Note: do NOT pass --bare — it disables keychain reads, which means the
   // spawned claude has no auth and exits with "Please run /login". Without
   // --bare, claude inherits the user's normal OAuth session.
+  //
+  // --tools is the containment boundary, and it matters more than it looks.
+  // The request file this agent reads contains free text typed by whoever made
+  // the request — including an anonymous guest holding a share link, since
+  // cellar27_share_create_pairing_request is granted to `anon`. render.js
+  // delimits and neutralizes that text, but prompt injection is not a problem
+  // you solve with escaping alone. So we also cap what a successful injection
+  // could reach:
+  //
+  //   --tools Read,Write   Removes every other built-in tool from the session.
+  //                        No Bash, no WebFetch/WebSearch, no MCP — so there is
+  //                        no command execution and no network egress to
+  //                        exfiltrate anything to.
+  //   cwd = bridgeDir      Read/Write outside the working directory prompt for
+  //                        permission, and --print auto-denies prompts. The
+  //                        bridge dir holds only request/response/image files,
+  //                        so watcher/.env (service key, SMTP password) is out
+  //                        of reach even though this process can see it.
+  //   acceptEdits          Still needed: it auto-approves the one write the job
+  //                        actually requires, the response file.
+  //
+  // Keep every element of `args` a literal. The shell:true note below depends
+  // on nothing dynamic reaching this array.
   const args = [
     '--print',
+    '--tools', 'Read,Write',
     '--permission-mode', 'acceptEdits',
     '--no-session-persistence',
   ];
