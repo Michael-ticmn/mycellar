@@ -143,7 +143,11 @@ Guest label photos go through an Edge Function instead, which with the service k
 
 The share RPCs still withhold `label_image_path` alongside the other owner-private fields, so the path isn't available as reusable data. It *is* embedded in the signed URL itself — that's unavoidable with Supabase signing — but knowing it grants nothing: the bare path 400s, the public-object route 400s, an anon-key read is refused by Storage RLS, and a signature can't be replayed against a different object. All four were verified against the deployed function.
 
-**Not yet covered:** there is no rate limit on this endpoint. A leaked token can pull label photos until the link is revoked. Acceptable while the payload is label photos of your own wine; revisit before any endpoint returns something more sensitive or lets guests *write* to Storage.
+**Throttle:** 60 requests per minute per token, returning 429 with `Retry-After`. Opening a bottle modal costs one request, so a real visit sits far below it. The counter is isolate-local — Supabase may run more than one isolate and they don't share state — so this is a speed bump, not a guarantee. A hard limit would need a counter in Postgres, which isn't worth a round-trip per request for label photos of your own wine. Revisit if this endpoint ever returns something that matters more, or lets guests *write* to Storage. Revoking the share link remains the real cutoff.
+
+`bottle_id` is validated as a UUID before use, so a malformed value gets a 400 rather than a 500 from a failed cast in Postgres.
+
+Remember this function deploys separately — see the deploy section in [README.md](../README.md). Committing a change here does not ship it.
 
 ## Layer 9 — Agent containment (untrusted text → spawned Claude)
 

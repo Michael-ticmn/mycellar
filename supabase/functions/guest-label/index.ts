@@ -31,6 +31,42 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 const SIGNED_URL_TTL_SECONDS = 600;
 const BUCKET = 'bottle-labels';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Per-token throttle. A guest opening bottle detail modals fires one request
+// per open, so a real visit is a handful per minute; 60 leaves enormous room
+// while still stopping a leaked token from being used to pull the whole cellar's
+// photos in a loop.
+//
+// This is isolate-local, which makes it a speed bump rather than a guarantee:
+// Supabase may run several isolates, and they don't share state. That's the
+// honest scope. A hard limit would need a counter in Postgres, which isn't
+// worth a round-trip per request for label photos of your own wine — but revisit
+// if this endpoint ever returns something that matters more. The real
+// containment remains the share link: revoke it and this stops serving.
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = 60;
+const hits = new Map<string, number[]>();
+
+function rateLimited(token: string): boolean {
+  const now = Date.now();
+  const recent = (hits.get(token) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (recent.length >= RATE_MAX) {
+    hits.set(token, recent);
+    return true;
+  }
+  recent.push(now);
+  hits.set(token, recent);
+  // Bound memory in a long-lived isolate: drop tokens whose window has fully
+  // aged out. Cheap because it only runs once the map is already large.
+  if (hits.size > 1000) {
+    for (const [k, v] of hits) {
+      if (!v.some((t) => now - t < RATE_WINDOW_MS)) hits.delete(k);
+    }
+  }
+  return false;
+}
+
 // The guest app is served from GitHub Pages, so this is a cross-origin call.
 // `*` is acceptable here because knowledge of the share token is what actually
 // gates the response — the origin isn't the secret.
@@ -54,6 +90,17 @@ Deno.serve(async (req) => {
   const token = url.searchParams.get('token');
   const bottleId = url.searchParams.get('bottle_id');
   if (!token || !bottleId) return json({ error: 'missing_params' }, 400);
+
+  // Reject a malformed id here rather than letting Postgres raise on the uuid
+  // cast — that path returned a 500 for what is plainly a bad request.
+  if (!UUID_RE.test(bottleId)) return json({ error: 'invalid_bottle_id' }, 400);
+
+  if (rateLimited(token)) {
+    return new Response(JSON.stringify({ error: 'rate_limited' }), {
+      status: 429,
+      headers: { ...CORS, 'Content-Type': 'application/json', 'Retry-After': '60' },
+    });
+  }
 
   const sb = createClient(
     Deno.env.get('SUPABASE_URL')!,
