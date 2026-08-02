@@ -3,10 +3,22 @@ import { suggestDrinkWindow } from './varietal-windows.js';
 
 // All queries rely on RLS to scope by user_id; we still set user_id on insert.
 
+// Everything except `details`, which is the AI enrichment blob — capped at 8 KB
+// a row and never read by any list view. Pulling it for the whole cellar on
+// every grid paint was most of the payload for none of the value; the detail
+// page uses getBottle(), which still selects everything.
+const LIST_COLUMNS = [
+  'id', 'producer', 'wine_name', 'varietal', 'blend_components', 'vintage',
+  'region', 'country', 'style', 'sweetness', 'body', 'quantity',
+  'storage_location', 'acquired_date', 'acquired_price',
+  'drink_window_start', 'drink_window_end', 'drink_window_overridden',
+  'notes', 'label_image_path', 'back_image_path', 'created_at', 'updated_at',
+].join(', ');
+
 export async function listBottles({ orderBy = 'created_at', ascending = false } = {}) {
   const { data, error } = await sb
     .from('bottles')
-    .select('*')
+    .select(LIST_COLUMNS)
     .order(orderBy, { ascending });
   if (error) throw error;
   return data;
@@ -16,6 +28,19 @@ export async function getBottle(id) {
   const { data, error } = await sb.from('bottles').select('*').eq('id', id).single();
   if (error) throw error;
   return data;
+}
+
+// Fetch several bottles in one round-trip and return them as a Map keyed by id.
+// The render paths that show AI picks used to await getBottle() per
+// recommendation — one request each, serially in the flight/plan case. Missing
+// ids simply don't appear in the map, which is what callers already handle
+// (a pick can reference a bottle that's since been deleted).
+export async function getBottlesByIds(ids) {
+  const unique = [...new Set((ids || []).filter(Boolean))];
+  if (!unique.length) return new Map();
+  const { data, error } = await sb.from('bottles').select('*').in('id', unique);
+  if (error) throw error;
+  return new Map((data || []).map((b) => [b.id, b]));
 }
 
 // Auto-fills drink_window_start/end from varietal+vintage if user didn't set them.
@@ -105,10 +130,23 @@ export async function findDuplicate({ producer, wine_name, vintage, varietal }) 
   const np = norm(producer);
   const nw = norm(wine_name);
   const nv = norm(varietal);
-  const all = await listBottles();
-  return all.find((b) => {
+
+  // Let Postgres narrow it instead of pulling the whole cellar down on every
+  // scan save. `ilike` is case-insensitive, matching how norm() compares.
+  // It treats % and _ as wildcards, so a producer like "50% Blend" can match
+  // extra rows — harmless, because the exact norm() comparison below is what
+  // actually decides. Treat this query as a prefilter, not the rule.
+  //
+  // Selects `*` deliberately: the caller merges label paths and details off the
+  // match, so this is the one list-ish read that does need the full row.
+  const { data, error } = await sb.from('bottles')
+    .select('*')
+    .ilike('producer', producer.trim())
+    .eq('vintage', vintage);   // different year = different bottle
+  if (error) throw error;
+
+  return (data || []).find((b) => {
     if (norm(b.producer) !== np) return false;
-    if (b.vintage !== vintage) return false; // different year = different bottle
     const bw = norm(b.wine_name);
     if (nw && bw) return nw === bw;
     if (!nw && !bw) return norm(b.varietal) === nv;
@@ -116,14 +154,29 @@ export async function findDuplicate({ producer, wine_name, vintage, varietal }) 
   }) || null;
 }
 
-// Tap-to-pour: -1 with quantity floor of 0.
+// Tap-to-pour: -1 with a floor of 0.
+//
+// Goes through an RPC rather than read-then-write. The old version fetched the
+// row, subtracted one, and wrote it back — two pours in flight together both
+// read N and both wrote N-1, losing one. The RPC is a single UPDATE with
+// `quantity > 0` in the WHERE clause, so the decrement and the floor check
+// can't be split. It runs SECURITY INVOKER, so RLS still scopes it to the
+// caller's own bottles.
+//
+// No rows back means the guard rejected it: either the bottle is at zero or it
+// isn't visible to this user. Both read the same way to the person tapping.
 export async function pourBottle(id) {
-  const b = await getBottle(id);
-  if (b.quantity <= 0) throw new Error('No bottles left to pour');
-  return updateBottle(id, { quantity: b.quantity - 1 });
+  const { data, error } = await sb.rpc('cellar27_pour_bottle', { p_bottle_id: id });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error('No bottles left to pour');
+  return row;
 }
 
 export async function undoPour(id) {
-  const b = await getBottle(id);
-  return updateBottle(id, { quantity: b.quantity + 1 });
+  const { data, error } = await sb.rpc('cellar27_unpour_bottle', { p_bottle_id: id });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error("Couldn't undo — bottle not found.");
+  return row;
 }

@@ -1,5 +1,5 @@
 import { getSession, signIn, onAuthChange } from './auth.js';
-import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, updateBottle, saveEnrichment, findDuplicate } from './bottles.js';
+import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, getBottlesByIds, updateBottle, saveEnrichment, findDuplicate } from './bottles.js';
 import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
 import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } from './pairings.js';
 import {
@@ -146,6 +146,7 @@ async function mountShare() {
       if (!confirm('Revoke this share link? Anyone using it will lose access immediately.')) return;
       try {
         await revokeShareLink(link.id);
+        invalidateActiveShareLink();
         renderActive(null);
       } catch (e) { alert(e.message); }
     };
@@ -155,9 +156,12 @@ async function mountShare() {
     };
   };
 
+  // Deliberately uncached: this is the page that creates and revokes links, so
+  // it should always show the real current state.
   let activeLink = null;
   try {
-    activeLink = await getActiveShareLink();
+    invalidateActiveShareLink();
+    activeLink = await cachedActiveShareLink();
     renderActive(activeLink);
   } catch (e) { errEl.textContent = e.message; }
 
@@ -178,6 +182,7 @@ async function mountShare() {
     btn.disabled = true;
     try {
       const link = await createShareLink({ ttlHours, aiQuota });
+      invalidateActiveShareLink();
       activeLink = link;
       renderActive(link);
       await renderGuestActivity(link);
@@ -473,12 +478,28 @@ function ctxSummary(ctx, requestType) {
 // Refresh the unread-pip on the Share nav icon. Called on app boot,
 // after route changes, and after any owner-side action that might
 // affect the count.
+// The active share link changes only when the owner creates or revokes one, but
+// this ran on every route change — two queries per navigation. Cache it for a
+// minute and let the mutating paths clear it, so moving around the app costs
+// one count query instead of two round-trips.
+let _activeLinkCache = null; // { at, link }
+const ACTIVE_LINK_TTL_MS = 60_000;
+async function cachedActiveShareLink() {
+  if (_activeLinkCache && Date.now() - _activeLinkCache.at < ACTIVE_LINK_TTL_MS) {
+    return _activeLinkCache.link;
+  }
+  const link = await getActiveShareLink();
+  _activeLinkCache = { at: Date.now(), link };
+  return link;
+}
+function invalidateActiveShareLink() { _activeLinkCache = null; }
+
 async function refreshShareNavBadge() {
   const navEl = $('nav a[data-route="share"]');
   if (!navEl) return;
   navEl.querySelector('.share-nav-badge')?.remove();
   let link;
-  try { link = await getActiveShareLink(); } catch { return; }
+  try { link = await cachedActiveShareLink(); } catch { return; }
   if (!link) return;
   const since = getLastSeenGuestActivity(link.id);
   let count;
@@ -1447,9 +1468,12 @@ function restoreResult(key, resultEl) {
 }
 async function renderRecommendations(resultEl, response, opts = {}) {
   const recs = Array.isArray(response.recommendations) ? response.recommendations : [];
-  const cards = await Promise.all(recs.map(async (r) => {
-    let bottle = null;
-    try { bottle = await getBottle(r.bottle_id); } catch { /* unknown id */ }
+  // One query for every pick, not one per pick. Ids the model invented (or that
+  // point at a since-deleted bottle) are simply absent from the map, which is
+  // the same "Unknown bottle" case the per-pick fetch produced on error.
+  const byId = await getBottlesByIds(recs.map((r) => r.bottle_id));
+  const cards = recs.map((r) => {
+    const bottle = byId.get(r.bottle_id) || null;
     if (!bottle) {
       return `<article class="bottle-card"><div class="bottle-meta">
         <h3 class="muted">Unknown bottle</h3>
@@ -1465,7 +1489,7 @@ async function renderRecommendations(resultEl, response, opts = {}) {
         <p><span class="qty">${escapeHtml(r.confidence || 'medium')}</span> · ${escapeHtml(r.reasoning || '')}</p>
       </div>
     </article>`;
-  }));
+  });
   const narrative = narrativeBlockHTML(response.narrative, { heading: 'Narrative' });
   const saveSection = opts.savable ? saveFlightFormHTML() : '';
   resultEl.innerHTML = `
@@ -1903,8 +1927,14 @@ async function mountPlannedDetail(root, id) {
 
 async function pollForEnrichment(root, id) {
   const deadline = Date.now() + 5 * 60_000;
+  // Back off rather than hammering a fixed 4s for the full five minutes: the
+  // enrichment usually lands in the first 30–90s, so a flat interval spent ~75
+  // queries to catch something the first handful almost always got. Start
+  // tight, ease to 20s. Same shape as the guest-side poll in guest.js.
+  let delay = 4000;
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 4000));
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(Math.round(delay * 1.5), 20_000);
     // Stop if the user navigated away.
     if (!document.body.contains(root) || location.hash !== `#/planned/${id}`) return;
     let fresh;
@@ -1922,10 +1952,8 @@ async function renderPlannedDetail(root, plan) {
   // Pre-fetch each pick's bottle so we can show producer/varietal next to
   // its prep row. Tolerant of deleted bottles (unknown id renders muted).
   const picks = Array.isArray(plan.picks) ? plan.picks : [];
-  const bottles = await Promise.all(picks.map(async (p) => {
-    try { return { pick: p, bottle: await getBottle(p.bottle_id) }; }
-    catch { return { pick: p, bottle: null }; }
-  }));
+  const pickById = await getBottlesByIds(picks.map((p) => p.bottle_id));
+  const bottles = picks.map((p) => ({ pick: p, bottle: pickById.get(p.bottle_id) || null }));
 
   const headerHTML = `
     <header class="planned-header">
@@ -2009,7 +2037,7 @@ async function renderPlannedGuestSection(root, plan) {
   if (!body) return;
 
   let link;
-  try { link = await getActiveShareLink(); }
+  try { link = await cachedActiveShareLink(); }
   catch (e) {
     body.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
     return;
@@ -2712,9 +2740,9 @@ async function renderPourResultHTML(response) {
     }
   }
   if (Array.isArray(response.match_candidates) && response.match_candidates.length) {
-    const cards = await Promise.all(response.match_candidates.map(async (c) => {
-      let b = null;
-      try { b = await getBottle(c.bottle_id); } catch {}
+    const candidateById = await getBottlesByIds(response.match_candidates.map((c) => c.bottle_id));
+    const cards = response.match_candidates.map((c) => {
+      const b = candidateById.get(c.bottle_id) || null;
       const head = b
         ? `<h3>${escapeHtml(b.producer)}${b.wine_name ? ` · ${escapeHtml(b.wine_name)}` : ''}${b.vintage ? ` · ${b.vintage}` : ''}</h3>`
         : `<h3 class="muted">Unknown bottle (${escapeHtml(c.bottle_id)})</h3>`;
@@ -2725,7 +2753,7 @@ async function renderPourResultHTML(response) {
           <button data-action="confirm-pour" data-bottle-id="${escapeAttr(c.bottle_id)}">Pour this</button>
         </div>
       </article>`;
-    }));
+    });
     return `<h2>Possible matches</h2><div class="grid">${cards.join('')}</div>`;
   }
   return `<h2>No match in your cellar</h2>
