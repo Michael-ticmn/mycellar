@@ -8,7 +8,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
-import { CONFIG } from './config.js';
+import { CONFIG, intEnv } from './config.js';
 
 const ts = () => new Date().toISOString();
 const log = (...a) => console.log(ts(), '[agent]', ...a);
@@ -78,7 +78,7 @@ function resolveBin() {
 // in it, those rows stay 'picked_up' and the stale-claim sweep returns them to
 // 'pending' on restart, which is exactly the path that already exists.
 const AGENT_TIMEOUT_MS = Math.max(60_000, (CONFIG.timeoutMinutes + 2) * 60_000);
-const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_AGENTS || '3', 10);
+const MAX_CONCURRENT = intEnv('MAX_CONCURRENT_AGENTS', 3, { min: 1, max: 32 });
 let running = 0;
 const queue = [];
 

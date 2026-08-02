@@ -1406,3 +1406,20 @@ body.guest-mode .topbar .userbox { display: none; }
      property does not apply to SVG animation elements. pourLoaderHTML()
      checks this same media query and emits a static glass instead. */
 }
+
+/* Visually hidden, still read by assistive tech. Backs the polite live region
+   announce() creates for AI results — see app.js. Deliberately not
+   `display:none` or `visibility:hidden`, which remove the node from the
+   accessibility tree and would make the announcement silent. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

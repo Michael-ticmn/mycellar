@@ -3,13 +3,13 @@
 // already caps pending requests at 5; this is the extra barrier in
 // case sign-ups accidentally get re-enabled or an account is compromised.
 
-import { CONFIG } from './config.js';
+import { CONFIG, intEnv } from './config.js';
 
 // Sliding-window in-memory rate limit: max N requests per user per WINDOW_MS.
 // Tunable via WATCHER_RATE_LIMIT_PER_HOUR env var. The DB also enforces
 // its own check; this is the redundant backstop.
 const WINDOW_MS = 60 * 60 * 1000; // 1 hour
-const MAX_PER_WINDOW = parseInt(process.env.WATCHER_RATE_LIMIT_PER_HOUR || '100', 10);
+const MAX_PER_WINDOW = intEnv('WATCHER_RATE_LIMIT_PER_HOUR', 100, { min: 1, max: 100_000 });
 const MAX_TRACKED_USERS = 10_000; // hard cap to bound memory
 const hits = new Map(); // user_id → number[] of timestamps (insertion-ordered)
 
@@ -57,6 +57,25 @@ export function _trackedUserCount() { return hits.size; }
 // intent in migration 0009. Callers pass the share link as the subject for
 // those, which keeps the backstop per-link. The allowlist check stays on the
 // real user_id: the owner is the one who has to be authorized.
+// Storage objects live under "<user_id>/<filename>" (see uploadCapture in
+// docs/js/scan.js). scan_requests.image_paths is client-written and the watcher
+// fetches it with the service-role key, which is not subject to the bucket's
+// per-user folder policies — so this predicate is the only thing between a
+// client-chosen string and a cross-tenant read of someone's label photo.
+//
+// Deliberately strict: exactly one leading segment equal to the requester's
+// uuid, at least one segment after it, no traversal, no backslashes (Supabase
+// keys use forward slashes; a backslash is a Windows-path smell, not a real
+// object name), and no empty or "." segments.
+export function isOwnedStoragePath(storagePath, userId) {
+  if (typeof storagePath !== 'string' || !userId) return false;
+  if (storagePath.includes('\\') || storagePath.includes('..')) return false;
+  const segments = storagePath.split('/');
+  if (segments.length < 2) return false;
+  if (segments.some((s) => s === '' || s === '.')) return false;
+  return segments[0].toLowerCase() === String(userId).toLowerCase();
+}
+
 export function denyReason(userId, { subject = userId, record = true } = {}) {
   if (!isAllowed(userId)) return `user ${userId} not on allowlist`;
   const rl = checkRateLimit(subject, { record });

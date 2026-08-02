@@ -143,7 +143,12 @@ async function mountShare() {
     $('#share-meta').textContent = `${aiLeft} of ${link.ai_quota} AI requests left · expires in ~${hoursLeft}h`;
 
     $('#share-revoke').onclick = async () => {
-      if (!confirm('Revoke this share link? Anyone using it will lose access immediately.')) return;
+      const ok = await askConfirm({
+        title: 'Revoke this share link?',
+        body: 'Anyone using it will lose access immediately.',
+        confirmLabel: 'Revoke',
+      });
+      if (!ok) return;
       try {
         await revokeShareLink(link.id);
         invalidateActiveShareLink();
@@ -287,7 +292,11 @@ async function renderGuestActivity(activeLink) {
       const id = btn.dataset.deleteMessageId;
       const message = messagesById.get(id);
       const label = message?.guest_name ? `${message.guest_name}'s ` : 'this ';
-      if (!confirm(`Delete ${label}guest activity? This can't be undone.`)) return;
+      const ok = await askConfirm({
+        title: `Delete ${label}guest activity?`,
+        body: "This can't be undone.",
+      });
+      if (!ok) return;
       const card = btn.closest('.guest-activity-card');
       btn.disabled = true;
       try {
@@ -778,6 +787,7 @@ async function renderGuestRecommendations(resultEl, response, bottleById, opts =
     </section>
     ${sendBlock}`;
   wireGuestBottleClicks(resultEl, bottleById, opts.token);
+  announceResult(resultEl, recs.length);
   if (opts.token && opts.requestType) {
     wireSendToHost(resultEl, opts.token, {
       kind: 'ai_result',
@@ -1327,7 +1337,7 @@ async function onPour(e) {
 }
 async function onDelete(e) {
   const id = e.currentTarget.dataset.delete;
-  if (!confirm('Delete this bottle?')) return;
+  if (!await askConfirm({ title: 'Delete this bottle?' })) return;
   try { await deleteBottle(id); render(); }
   catch (err) { showToast(friendlyError(err)); }
 }
@@ -1629,6 +1639,7 @@ async function renderRecommendations(resultEl, response, opts = {}) {
     });
   });
   if (opts.savable) wireSaveFlight(resultEl, response, opts.context || {});
+  announceResult(resultEl, recs.length);
 }
 
 // Inline form rendered below a flight builder result so the user can
@@ -2440,7 +2451,7 @@ function wirePlannedDetail(root, plan) {
 
   // Delete
   $('[data-action="delete"]', root)?.addEventListener('click', async () => {
-    if (!confirm('Delete this planned flight?')) return;
+    if (!await askConfirm({ title: 'Delete this planned flight?' })) return;
     try {
       await deletePlannedFlight(id);
       location.hash = '#/planned';
@@ -3005,7 +3016,7 @@ function wireBottleDetail(root, bottle) {
       return;
     }
     if (action === 'delete') {
-      if (!confirm('Delete this bottle?')) return;
+      if (!await askConfirm({ title: 'Delete this bottle?' })) return;
       try { await deleteBottle(bottle.id); location.hash = '#/cellar'; }
       catch (err) { showToast(friendlyError(err)); }
       return;
@@ -3138,6 +3149,66 @@ function askChoice({ title, body, options }) {
     const primaryIdx = Math.max(0, options.findIndex((o) => o.primary));
     $$('button', overlay)[primaryIdx]?.focus();
   });
+}
+
+// ── Screen-reader announcements ───────────────────────────────────
+//
+// The pour loader is role="status" aria-live="polite", so a screen-reader user
+// hears that work started. Nothing said it had finished: the result containers
+// are plain divs whose contents get swapped by innerHTML, and the page is
+// otherwise silent for the 10-60 seconds the bridge takes. This is the one
+// screen in the app where an unannounced update is the entire point of the
+// screen.
+//
+// A one-line summary through a dedicated region, rather than marking the result
+// container itself live — a live region wrapped around three wine cards and a
+// narrative would read the whole result aloud on every repaint, which is worse
+// than saying nothing.
+let _liveRegion = null;
+function announce(msg) {
+  if (!_liveRegion) {
+    _liveRegion = document.createElement('div');
+    _liveRegion.className = 'sr-only';
+    _liveRegion.setAttribute('role', 'status');
+    _liveRegion.setAttribute('aria-live', 'polite');
+    document.body.appendChild(_liveRegion);
+  }
+  // An identical string written twice in a row isn't re-announced, and "3 picks"
+  // is a plausible thing to get twice. Clear, then set on the next tick.
+  _liveRegion.textContent = '';
+  setTimeout(() => { _liveRegion.textContent = msg; }, 50);
+}
+
+// Announce the result and move focus to it, so the keyboard case lands on the
+// new content instead of wherever the submit button used to be.
+function announceResult(resultEl, count) {
+  announce(count
+    ? `Sommelier results ready — ${count} ${count === 1 ? 'pick' : 'picks'}.`
+    : 'Sommelier finished, but returned no picks.');
+  if (!resultEl) return;
+  resultEl.setAttribute('tabindex', '-1');
+  resultEl.focus({ preventScroll: true });
+}
+
+// Yes/no on top of askChoice, for the destructive actions that genuinely are
+// yes/no. Native confirm() answers those correctly, but it's a second dialog
+// system for one job: unstyled, outside the focus trap, and prefixed with the
+// origin string when the app runs standalone from the home screen.
+//
+// Cancel is marked primary so it takes initial focus — `primary` only drives
+// focus here, `ghost` drives appearance, so the destructive button still reads
+// as the main action while Enter-on-open backs out. Resolves false on dismiss,
+// which is what every caller wants from a delete confirmation.
+async function askConfirm({ title, body, confirmLabel = 'Delete' }) {
+  const choice = await askChoice({
+    title,
+    body,
+    options: [
+      { value: 'yes', label: confirmLabel },
+      { value: null, label: 'Cancel', ghost: true, primary: true },
+    ],
+  });
+  return choice === 'yes';
 }
 
 // ── Lightbox (tap photo → fullscreen) ─────────────────────────────

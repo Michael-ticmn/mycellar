@@ -22,6 +22,13 @@
 // share RPCs still withhold is the path as reusable *data* alongside the other
 // owner-private fields.
 //
+// Caveat that isn't visible from here: "only this function holds the service
+// key" is false — the watcher holds it too, and it fetches Storage objects by
+// path on behalf of scan requests. That made a path lifted out of a signed URL
+// replayable by anyone with an account, until isOwnedStoragePath() landed in
+// watcher/src/policy.js. See Layer 10 of docs/SECURITY.md before relaxing
+// either side.
+//
 // Deploy:  supabase functions deploy guest-label
 // Verify:  curl "$SUPABASE_URL/functions/v1/guest-label?token=<t>&bottle_id=<id>" \
 //            -H "Authorization: Bearer $SUPABASE_ANON_KEY"
