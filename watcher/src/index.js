@@ -8,7 +8,7 @@ import { renderPairingRequest, renderScanRequest } from './render.js';
 import { getWeather } from './weather.js';
 import { parsePairingResponse, parseScanResponse } from './parse.js';
 import { invokeBridgeAgent } from './agent.js';
-import { denyReason } from './policy.js';
+import { denyReason, isOwnedStoragePath } from './policy.js';
 import { notify } from './notify.js';
 
 const log = (...args) => console.log(new Date().toISOString(), ...args);
@@ -265,8 +265,15 @@ async function hydratePlanContext(row) {
   const planId = row.context?.planned_flight_id;
   if (!planId) return row;
 
+  // Scoped to the requesting row's owner. This client holds the service-role
+  // key, so RLS does not apply — without the user_id predicate, any
+  // authenticated user could name someone else's planned_flight_id and have its
+  // title, theme, narrative, picks and hints rendered into their own agent
+  // prompt, then read the answer back off their own pairing_responses row.
+  // Correct for flight_guest too: those rows carry the host's user_id, and the
+  // plan belongs to the host.
   const { data, error } = await sb.from('planned_flights')
-    .select('*').eq('id', planId).maybeSingle();
+    .select('*').eq('id', planId).eq('user_id', row.user_id).maybeSingle();
   if (error || !data) {
     // Fall back to whatever the client sent rather than failing the request.
     err(`hydrate planned_flight ${planId}:`, error?.message || 'row not found');
@@ -351,6 +358,23 @@ async function pickUp(table, row, { isRetry = false } = {}) {
     // Download all images (front, back, etc) to local paths the agent can read.
     // Parallelize: a 2-image scan halves wall-clock latency vs sequential awaits.
     const paths = Array.isArray(claimed.image_paths) ? claimed.image_paths : [];
+    // image_paths is client-written: submitScanRequest passes through whatever
+    // it's handed, and the RLS policy on scan_requests only constrains user_id.
+    // We fetch these with the service key, which is not subject to the bucket's
+    // per-user folder policies — so without this check a request naming
+    // "<someone-else>/scan-<uuid>-front.jpg" would have the agent read and
+    // describe a stranger's label photo. Object paths aren't secret either: a
+    // guest-label signed URL embeds one in full.
+    //
+    // Refuse the whole request rather than skipping the offending path. A path
+    // outside the requester's own prefix means a bug or an attempt, and neither
+    // should be quietly downgraded into a partial scan.
+    const foreign = paths.filter((p) => !isOwnedStoragePath(p, claimed.user_id));
+    if (foreign.length) {
+      err(`scan ${claimed.id}: ${foreign.length} image path(s) outside user ${claimed.user_id}'s prefix; refusing`);
+      await markError(table, claimed.id, 'Image path is not yours.');
+      return;
+    }
     const images = await Promise.all(paths.map(async (storagePath, i) => {
       const ext = extname(storagePath) || '.jpg';
       // Convention: paths are uploaded as ".../scan-<uuid>-<label>.jpg".
@@ -365,10 +389,13 @@ async function pickUp(table, row, { isRetry = false } = {}) {
     // For 'enrich' intent, optionally fetch the bottle row to give the agent context.
     let existingBottle = null;
     if (claimed.intent === 'enrich' && claimed.context?.bottle_id) {
+      // user_id predicate for the same reason as hydratePlanContext: the
+      // service-role key bypasses RLS, and context.bottle_id is client-supplied.
       const { data, error: bErr } = await sb
         .from('bottles')
         .select('id, producer, wine_name, varietal, blend_components, vintage, region, country, style, sweetness, body, drink_window_start, drink_window_end, notes')
         .eq('id', claimed.context.bottle_id)
+        .eq('user_id', claimed.user_id)
         .maybeSingle();
       if (bErr) throw bErr;
       existingBottle = data;
@@ -483,6 +510,22 @@ function resolveRequestId(path, prefix, frontmatterId) {
   return fromName;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Both response tables have a unique index on request_id. Ingest is three steps
+// — insert, mark completed, archive — and only the first is guarded by that
+// index. If the insert lands and a later step fails (a network blip is enough,
+// and this runs on a laptop that sleeps), nothing archives; chokidar runs with
+// ignoreInitial:false, so the leftover file is re-read on the next start, dies
+// on 23505, and never archives. That repeats on every restart while the request
+// sits in 'picked_up' and the sweep spends two more agent runs on it.
+//
+// A duplicate key here means the response is already stored, which is the
+// outcome we wanted. Log it and carry on to the two idempotent steps.
+function isDuplicateKey(error) {
+  return error?.code === '23505' || /duplicate key value/i.test(error?.message || '');
+}
+
 async function ingestPairingResponse(path) {
   const text = await readFile(path, 'utf8');
   const parsed = parsePairingResponse(text);
@@ -494,7 +537,8 @@ async function ingestPairingResponse(path) {
     narrative: parsed.narrative,
     payload: parsed.payload,
   });
-  if (insErr) throw insErr;
+  if (insErr && !isDuplicateKey(insErr)) throw insErr;
+  if (insErr) log(`pairing ${requestId}: response already stored; finishing ingest`);
 
   const { error: updErr } = await sb.from('pairing_requests')
     .update({ status: 'completed' })
@@ -503,6 +547,32 @@ async function ingestPairingResponse(path) {
 
   await archive(`req-${requestId}.md`, path);
   log(`completed pairing ${requestId}`);
+}
+
+// Returns the id if it is a real bottle belonging to whoever made this scan
+// request, else null. Never throws: a bad match is a reason to drop one field,
+// not to lose the response.
+async function verifyMatchedBottle(candidate, requestId) {
+  if (candidate == null) return null;
+  const id = String(candidate).trim();
+  if (!UUID_RE.test(id)) {
+    log(`scan ${requestId}: matched_bottle_id is not a uuid; dropping it`);
+    return null;
+  }
+  const { data: req } = await sb.from('scan_requests')
+    .select('user_id').eq('id', requestId).maybeSingle();
+  if (!req) return null;
+  const { data: bottle, error } = await sb.from('bottles')
+    .select('id').eq('id', id).eq('user_id', req.user_id).maybeSingle();
+  if (error) {
+    log(`scan ${requestId}: could not verify matched_bottle_id (${error.message}); dropping it`);
+    return null;
+  }
+  if (!bottle) {
+    log(`scan ${requestId}: matched_bottle_id ${id} is not a bottle of this user; dropping it`);
+    return null;
+  }
+  return id;
 }
 
 async function ingestScanResponse(path) {
@@ -519,14 +589,28 @@ async function ingestScanResponse(path) {
     extracted = { ...(extracted || {}), details: parsed.details };
   }
 
+  // matched_bottle_id is a uuid column with an FK to bottles, and its value
+  // comes straight out of the agent's JSON. A model that invents a plausible id
+  // (or emits a non-uuid string) fails the insert on the cast or the FK and
+  // takes `extracted` and `narrative` down with it — fields that were probably
+  // fine — then burns two sweep retries producing the same bad output.
+  //
+  // Verify it instead, and drop just that field when it doesn't hold up. A null
+  // matched_bottle_id is the ordinary "no match found" answer the client
+  // already renders. Scoped to the requester for the same reason as everything
+  // else in this file that reads with the service key.
+  const matchedBottleId = await verifyMatchedBottle(
+    parsed.matched_bottle_id, requestId);
+
   const { error: insErr } = await sb.from('scan_responses').insert({
     request_id: requestId,
     extracted,
-    matched_bottle_id: parsed.matched_bottle_id,
+    matched_bottle_id: matchedBottleId,
     match_candidates: parsed.match_candidates,
     narrative: parsed.narrative,
   });
-  if (insErr) throw insErr;
+  if (insErr && !isDuplicateKey(insErr)) throw insErr;
+  if (insErr) log(`scan ${requestId}: response already stored; finishing ingest`);
 
   const { error: updErr } = await sb.from('scan_requests')
     .update({ status: 'completed' })

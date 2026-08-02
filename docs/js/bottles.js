@@ -133,15 +133,25 @@ export async function findDuplicate({ producer, wine_name, vintage, varietal }) 
 
   // Let Postgres narrow it instead of pulling the whole cellar down on every
   // scan save. `ilike` is case-insensitive, matching how norm() compares.
-  // It treats % and _ as wildcards, so a producer like "50% Blend" can match
-  // extra rows — harmless, because the exact norm() comparison below is what
-  // actually decides. Treat this query as a prefilter, not the rule.
+  //
+  // The pattern has to be escaped. `%` and `_` are LIKE wildcards, so an
+  // unescaped producer of "50% Blend" — or worse, a bare "%" out of a bad label
+  // read — matches far more rows than intended, and this query selects `*`.
+  // That is exactly the whole-cellar pull this was rewritten to avoid, so the
+  // widening isn't cosmetic even though the exact norm() comparison below still
+  // decides correctness. Backslash is Postgres's default LIKE escape character.
+  //
+  // Known gap: PostgREST also treats `*` as an alias for `%` in like/ilike
+  // patterns and offers no escape for it, so a producer containing a literal
+  // asterisk still widens. No wine has one; noted so it isn't mistaken for
+  // thoroughness.
   //
   // Selects `*` deliberately: the caller merges label paths and details off the
   // match, so this is the one list-ish read that does need the full row.
+  const likePattern = producer.trim().replace(/[\\%_]/g, (c) => `\\${c}`);
   const { data, error } = await sb.from('bottles')
     .select('*')
-    .ilike('producer', producer.trim())
+    .ilike('producer', likePattern)
     .eq('vintage', vintage);   // different year = different bottle
   if (error) throw error;
 

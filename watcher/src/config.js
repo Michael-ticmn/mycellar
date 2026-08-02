@@ -10,6 +10,25 @@ for (const k of required) {
   }
 }
 
+// Every numeric setting used to go through a bare parseInt, so a typo became
+// NaN and propagated silently into control flow that fails totally and without
+// a log line. TIMEOUT_MINUTES=1o made AGENT_TIMEOUT_MS NaN, which setTimeout
+// treats as 0 — every agent killed the instant it spawned. An empty
+// MAX_CONCURRENT_AGENTS made `running < NaN` false, so the queue grew forever
+// and nothing ever ran. .env is hand-edited on a box with no supervisor
+// watching, so refuse to start instead of misbehaving quietly.
+export function intEnv(name, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min || n > max) {
+    console.error(
+      `Invalid ${name}=${JSON.stringify(raw)} — expected an integer between ${min} and ${max}. See .env.example.`);
+    process.exit(1);
+  }
+  return n;
+}
+
 const bridgeDir = process.env.BRIDGE_DIR || join(homedir(), 'cellar27-bridge');
 
 export const CONFIG = {
@@ -22,18 +41,18 @@ export const CONFIG = {
     processed: join(bridgeDir, 'processed'),
     images:    join(bridgeDir, 'images'),
   },
-  timeoutMinutes: parseInt(process.env.TIMEOUT_MINUTES || '10', 10),
-  maxClaudeCallsPerDay: parseInt(process.env.MAX_CLAUDE_CALLS_PER_DAY || '250', 10),
+  timeoutMinutes: intEnv('TIMEOUT_MINUTES', 10, { min: 1, max: 24 * 60 }),
+  maxClaudeCallsPerDay: intEnv('MAX_CLAUDE_CALLS_PER_DAY', 250, { min: 1, max: 100_000 }),
   notify: {
     // SMTP (Gmail with an App Password works fine; Resend SMTP also fine).
     // Leave any one of these unset to disable notifications silently.
     host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT || '587', 10),
+    port: intEnv('SMTP_PORT', 587, { min: 1, max: 65535 }),
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
     from: process.env.NOTIFY_FROM || process.env.SMTP_USER,
     to:   process.env.NOTIFY_TO,
-    cooldownMs: parseInt(process.env.NOTIFY_COOLDOWN_MS || `${30 * 60_000}`, 10),
+    cooldownMs: intEnv('NOTIFY_COOLDOWN_MS', 30 * 60_000, { min: 0 }),
   },
   storageBucket: 'bottle-labels',
   autoInvoke: (process.env.AUTO_INVOKE || 'true').toLowerCase() !== 'false',

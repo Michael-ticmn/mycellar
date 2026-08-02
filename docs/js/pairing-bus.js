@@ -51,12 +51,52 @@ export async function createRequest({ requestType, context, includeCellar = true
 
 // Wait for a pairing_response row matching this request_id. Resolves with the
 // response, or rejects on timeout / status='error'.
+//
+// Realtime is a latency optimization here, not the source of truth. This used to
+// subscribe, check once for an already-present row, and otherwise wait out a
+// 5-minute timer — so a dropped socket (phone sleeping, wifi handoff, lid shut)
+// turned a completed 40-second AI run into "Timed out". Realtime does not replay
+// missed events, so the INSERT was simply never delivered.
+//
+// That mattered more than a bad error message: requestFlightPlanEnrichment and
+// requestGuestWalkthrough merge the payload into the planned_flights row *after*
+// this await, so a false timeout discarded real work and cost a second unit of
+// the daily ceiling on the re-run.
+//
+// Same three guards scan.js has had since its own version of this bug — a DB
+// re-check before ever reporting a timeout, a polling fallback while the channel
+// is down, and explicit handling of the terminal statuses. The two paths do the
+// same job and should fail the same way.
+const RESPONSE_POLL_MS = 5_000;
+
 export function waitForResponse(requestId, { timeoutMs = 5 * 60_000 } = {}) {
   return new Promise((resolve, reject) => {
     let done = false;
-    const finish = (fn, val) => { if (done) return; done = true; clearTimeout(timer); channel.unsubscribe(); fn(val); };
+    let timer = null;
+    let poll = null;
 
-    const timer = setTimeout(() => finish(reject, new Error('Timed out waiting for response (5 min).')), timeoutMs);
+    const finish = (fn, val) => {
+      if (done) return; done = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (poll)  { clearInterval(poll); poll = null; }
+      try { channel.unsubscribe(); } catch { /* idempotent */ }
+      fn(val);
+    };
+
+    // Authoritative check against the rows themselves.
+    const settleFromDb = async () => {
+      if (done) return true;
+      const { data: resp } = await sb.from('pairing_responses')
+        .select('*').eq('request_id', requestId).maybeSingle();
+      if (resp) { finish(resolve, resp); return true; }
+      const { data: req } = await sb.from('pairing_requests')
+        .select('status, error_message').eq('id', requestId).maybeSingle();
+      if (req?.status === 'error') {
+        finish(reject, new Error(req.error_message || 'Request failed.'));
+        return true;
+      }
+      return false;
+    };
 
     const channel = sb.channel(`pairing-resp-${requestId}`)
       .on('postgres_changes',
@@ -66,11 +106,25 @@ export function waitForResponse(requestId, { timeoutMs = 5 * 60_000 } = {}) {
         { event: 'UPDATE', schema: 'public', table: 'pairing_requests', filter: `id=eq.${requestId}` },
         ({ new: row }) => { if (row.status === 'error') finish(reject, new Error(row.error_message || 'Request failed.')); })
       .subscribe(async (status) => {
-        // After subscribing, check if the response already arrived (race).
+        // finish() unsubscribes, which itself emits CLOSED — without this guard
+        // that would start a polling interval after we're already done.
+        if (done) return;
         if (status === 'SUBSCRIBED') {
-          const { data: existing } = await sb.from('pairing_responses').select('*').eq('request_id', requestId).maybeSingle();
-          if (existing) finish(resolve, existing);
+          if (poll) { clearInterval(poll); poll = null; }
+          await settleFromDb();   // response may have landed before we subscribed
+          return;
+        }
+        if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') && !poll) {
+          poll = setInterval(() => { settleFromDb().catch(() => { /* retry next tick */ }); }, RESPONSE_POLL_MS);
         }
       });
+
+    timer = setTimeout(async () => {
+      if (await settleFromDb()) return;
+      const span = timeoutMs >= 60_000
+        ? `${Math.round(timeoutMs / 60_000)} min`
+        : `${Math.round(timeoutMs / 1_000)}s`;
+      finish(reject, new Error(`Timed out waiting for response (${span}).`));
+    }, timeoutMs);
   });
 }
