@@ -1196,7 +1196,7 @@ function bottleListRowHTML(b) {
     b.region ? escapeHtml(b.region) : '',
   ].filter(Boolean).join(' · ');
   return `
-    <article class="bottle-row" data-bottle-id="${b.id}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
+    <article class="bottle-row" data-bottle-id="${escapeAttr(b.id)}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
       <div class="bottle-row-main">
         <h3 class="bottle-row-title">${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
         <p class="bottle-row-sub muted">${subParts}</p>
@@ -1205,7 +1205,7 @@ function bottleListRowHTML(b) {
         <span class="qty">×${b.quantity}</span>
         ${window ? `<span class="window muted">${window}</span>` : ''}
       </div>
-      <button class="bottle-row-pour" data-pour="${b.id}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
+      <button class="bottle-row-pour" data-pour="${escapeAttr(b.id)}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
     </article>`;
 }
 
@@ -1214,7 +1214,7 @@ function bottleCardHTML(b) {
     ? `${b.drink_window_start}–${b.drink_window_end}`
     : '—';
   return `
-    <article class="bottle-card" data-bottle-id="${b.id}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
+    <article class="bottle-card" data-bottle-id="${escapeAttr(b.id)}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
       <div class="bottle-photo placeholder">${escapeHtml((b.producer || '?')[0])}</div>
       <div class="bottle-meta">
         <h3>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
@@ -1227,8 +1227,8 @@ function bottleCardHTML(b) {
           <span class="window">drink ${window}</span>
         </p>
         <div class="actions">
-          <button data-pour="${b.id}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
-          <button data-delete="${b.id}" class="ghost">Delete</button>
+          <button data-pour="${escapeAttr(b.id)}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
+          <button data-delete="${escapeAttr(b.id)}" class="ghost">Delete</button>
         </div>
       </div>
     </article>`;
@@ -2603,7 +2603,6 @@ function mountManage() {
 }
 
 function renderAddReviewHTML(ext, details, imagePaths, narrative) {
-  const sel = (val, opts) => opts.map((o) => `<option value="${o}" ${ext[o] === val || val === o ? 'selected' : ''}>${o}</option>`).join('');
   return `
     <h2>Review extracted details</h2>
     <p class="muted">Confidence: <strong>${escapeHtml(ext.confidence || 'unknown')}</strong>. Edit any field before saving.</p>
@@ -2614,7 +2613,7 @@ function renderAddReviewHTML(ext, details, imagePaths, narrative) {
         <input name="varietal" required value="${escapeAttr(ext.varietal || '')}" list="varietal-options-scan" />
         <datalist id="varietal-options-scan">${VARIETAL_NAMES.map((v) => `<option value="${v}">`).join('')}</datalist>
       </label>
-      <label>Vintage<input name="vintage" type="number" min="1900" max="2100" value="${ext.vintage ?? ''}" /></label>
+      <label>Vintage<input name="vintage" type="number" min="1900" max="2100" value="${escapeAttr(ext.vintage ?? '')}" /></label>
       <div class="row">
         <label style="flex:1">Region<input name="region" value="${escapeAttr(ext.region || '')}" /></label>
         <label style="flex:1">Country<input name="country" value="${escapeAttr(ext.country || '')}" /></label>
@@ -2629,7 +2628,7 @@ function renderAddReviewHTML(ext, details, imagePaths, narrative) {
             ${SWEETNESS_OPTS.map((s) => `<option ${ext.sweetness === s ? 'selected' : ''}>${s}</option>`).join('')}
           </select>
         </label>
-        <label style="flex:1">Body 1-5<input name="body" type="number" min="1" max="5" value="${ext.body ?? ''}" /></label>
+        <label style="flex:1">Body 1-5<input name="body" type="number" min="1" max="5" value="${escapeAttr(ext.body ?? '')}" /></label>
       </div>
       <div class="row">
         <label style="flex:1">Quantity<input name="quantity" type="number" min="0" value="1" /></label>
@@ -2703,7 +2702,7 @@ async function renderPourResultHTML(response) {
             <h3>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
             <p class="muted">${escapeHtml(b.varietal)}${b.vintage ? ` · ${b.vintage}` : ''} · ×${b.quantity}</p>
             <div class="actions">
-              <button data-action="confirm-pour" data-bottle-id="${b.id}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour this</button>
+              <button data-action="confirm-pour" data-bottle-id="${escapeAttr(b.id)}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour this</button>
               <a href="#/cellar" class="btn ghost" style="display:inline-block; padding:0.4rem 0.8rem; border:1px solid var(--surface-2); border-radius:var(--radius);">Cancel</a>
             </div>
           </div>
@@ -2723,7 +2722,7 @@ async function renderPourResultHTML(response) {
         <div class="bottle-meta">
           ${head}
           <p class="muted">Confidence: ${escapeHtml(c.confidence || '?')}. ${escapeHtml(c.reasoning || '')}</p>
-          <button data-action="confirm-pour" data-bottle-id="${c.bottle_id}">Pour this</button>
+          <button data-action="confirm-pour" data-bottle-id="${escapeAttr(c.bottle_id)}">Pour this</button>
         </div>
       </article>`;
     }));
@@ -2927,7 +2926,7 @@ function wireAuth() {
 function openLightbox(src) {
   const overlay = document.createElement('div');
   overlay.className = 'lightbox';
-  overlay.innerHTML = `<img src="${src}" alt="" />`;
+  overlay.innerHTML = `<img src="${escapeAttr(src)}" alt="" />`;
   const close = () => overlay.remove();
   overlay.addEventListener('click', close);
   document.addEventListener('keydown', function onKey(e) {

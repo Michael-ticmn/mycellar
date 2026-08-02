@@ -452,11 +452,32 @@ function watchResponses() {
   responsesWatcher = watcher;
 }
 
+// The response file is written by the agent, so its frontmatter is agent
+// output — not a trusted identifier. The filename, by contrast, is ours: we
+// created it as `<prefix>-<claimed.id>.md` and told the agent to write there.
+// Requiring them to match means a hallucinated (or injected) request_id can't
+// attach a response to somebody else's request, or archive the wrong file.
+function requestIdFromFilename(path, prefix) {
+  const m = basename(path).match(
+    new RegExp(`^${prefix}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.md$`, 'i'));
+  return m ? m[1].toLowerCase() : null;
+}
+
+function resolveRequestId(path, prefix, frontmatterId) {
+  const fromName = requestIdFromFilename(path, prefix);
+  if (!fromName) throw new Error(`unparseable response filename: ${basename(path)}`);
+  const claimed = String(frontmatterId || '').trim().toLowerCase();
+  if (claimed && claimed !== fromName) {
+    throw new Error(
+      `request_id mismatch in ${basename(path)}: frontmatter says ${claimed}, filename says ${fromName}`);
+  }
+  return fromName;
+}
+
 async function ingestPairingResponse(path) {
   const text = await readFile(path, 'utf8');
   const parsed = parsePairingResponse(text);
-  const requestId = parsed.frontmatter.request_id;
-  if (!requestId) throw new Error(`no request_id in ${path}`);
+  const requestId = resolveRequestId(path, 'req', parsed.frontmatter.request_id);
 
   const { error: insErr } = await sb.from('pairing_responses').insert({
     request_id: requestId,
@@ -478,8 +499,7 @@ async function ingestPairingResponse(path) {
 async function ingestScanResponse(path) {
   const text = await readFile(path, 'utf8');
   const parsed = parseScanResponse(text);
-  const requestId = parsed.frontmatter.request_id;
-  if (!requestId) throw new Error(`no request_id in ${path}`);
+  const requestId = resolveRequestId(path, 'scan', parsed.frontmatter.request_id);
 
   // scan_responses doesn't have a `details` column yet — pack details into
   // `extracted` for add intents, into `match_candidates` slot? No — cleaner:
