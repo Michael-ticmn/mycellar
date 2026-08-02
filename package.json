@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:docs": "esbuild docs/js/app.js --bundle --minify --format=esm --target=es2022 --sourcemap --outfile=docs/js/dist/app.bundle.js --legal-comments=none"
+    "build:docs": "esbuild docs/js/app.js --bundle --minify --format=esm --target=es2022 --sourcemap --outfile=docs/js/dist/app.bundle.js --legal-comments=none",
+    "dev": "node scripts/serve-docs.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.12"
