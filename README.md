@@ -8,7 +8,13 @@ This repo is a monorepo:
 |------|------|--------|
 | [`docs/`](docs/) | Static HTML/CSS/JS app, served by GitHub Pages | live |
 | [`watcher/`](watcher/) | Node service that bridges Supabase ↔ Claude Code | live |
-| [`supabase/migrations/`](supabase/migrations/) | SQL migrations for the Supabase project | 0002 applied |
+| [`supabase/migrations/`](supabase/migrations/) | SQL migrations for the Supabase project | 0001–0015 applied |
+| [`supabase/functions/`](supabase/functions/) | Supabase Edge Functions (Deno) | `guest-label` deployed |
+
+Migrations are applied by hand through the Supabase SQL editor — there is no
+migration runner wired up. Note two files share the number `0015`
+(`0015_guest_message_delete.sql` and `0015_planned_flight_intent.sql`); they
+touch unrelated objects so order doesn't matter, but pick `0016` next.
 
 ## Architecture
 
@@ -25,3 +31,14 @@ npm run build:docs     # bundles + minifies into docs/js/dist/
 ```
 
 Bump [`docs/version.js`](docs/version.js) so the service worker invalidates the old cache. The committed bundle is what GitHub Pages serves — there is no CI build step.
+
+## Deploying Edge Functions
+
+[`supabase/functions/`](supabase/functions/) is not covered by the frontend build or by GitHub Pages — functions deploy separately, and committing one does **not** ship it. Either use the Supabase dashboard (Edge Functions → Deploy a new function → via Editor, paste the file) or the CLI:
+
+```
+npx supabase@latest login
+npx supabase@latest functions deploy <name> --project-ref <your-project-ref>
+```
+
+No install is needed — `npx` fetches the CLI on demand, and Docker is only required for local `supabase start`, not for deploying. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically as reserved secrets, so functions using only those need nothing configured under Edge Function Secrets.

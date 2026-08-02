@@ -125,6 +125,22 @@ A 5 MB blob can't make it into the request row.
 
 `claimed_by` (hostname) and `retry_count` columns are added to both request tables for visibility.
 
+## Layer 8 — Guest access to private Storage objects
+
+**Where:** Edge Function [`supabase/functions/guest-label`](../supabase/functions/guest-label/index.ts).
+
+`bottle-labels` is private (`public = false`) and every Storage policy on it is `to authenticated` scoped to `(storage.foldername(name))[1] = auth.uid()::text`. An anonymous share-link guest matches none of them, so it can neither read an object nor create a signed URL. That's the intended posture and it stays.
+
+Guest label photos go through an Edge Function instead, which with the service key:
+
+1. Resolves the share token against `share_links` using the same `revoked_at is null and expires_at > now()` predicate as the share RPCs, so photos stop resolving at the exact moment the rest of the link does.
+2. Confirms the requested bottle belongs to **that link's owner**. Without this a valid token could read any bottle photo in the database.
+3. Returns a signed URL with a 600s TTL.
+
+The share RPCs still withhold `label_image_path` alongside the other owner-private fields, so the path isn't available as reusable data. It *is* embedded in the signed URL itself — that's unavoidable with Supabase signing — but knowing it grants nothing: the bare path 400s, the public-object route 400s, an anon-key read is refused by Storage RLS, and a signature can't be replayed against a different object. All four were verified against the deployed function.
+
+**Not yet covered:** there is no rate limit on this endpoint. A leaked token can pull label photos until the link is revoked. Acceptable while the payload is label photos of your own wine; revisit before any endpoint returns something more sensitive or lets guests *write* to Storage.
+
 ## Common bypass / one-shot cookbook
 
 - **"I need to bulk-scan 50 bottles right now":** raise the rate limit ceiling or replace the function body with `select true;` (see Layer 2). Restore when done.

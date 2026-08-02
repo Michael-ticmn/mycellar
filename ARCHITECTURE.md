@@ -92,6 +92,16 @@ The laptop only needs to be awake during step ③ (the AI reasoning window — t
 
 See [`docs/SECURITY.md`](docs/SECURITY.md) for the full limits table, where each is enforced, and how to tune.
 
+## Guest label photos (the one Edge Function)
+
+Everything else in this app is static frontend + Postgres + the laptop watcher. Guest label photos are the exception, because nothing else could do the job: `bottle-labels` is a private bucket whose Storage policies are all `to authenticated` and scoped to the owner's own folder, so an anonymous share-link guest can neither read an object nor sign a URL for one. Postgres can't mint Storage signed URLs either — that's the Storage API, not SQL.
+
+So [`supabase/functions/guest-label`](supabase/functions/guest-label/index.ts) validates the share token with the service key and returns a ~10 minute signed URL. It checks the same not-revoked/not-expired predicate the share RPCs use, then confirms the bottle belongs to that link's owner — without that second check a valid token could read any bottle's photo in the database. Photos therefore die with the link.
+
+Note what this does *not* hide: a Supabase signed URL embeds the object path, so the guest sees the bucket, the owner's user_id, and the filename. That's inert — the bucket is private, an unsigned request 400s, and signing requires the service key.
+
+It deploys separately from the frontend; see the deploy section in [README.md](README.md). Committing a function does not ship it.
+
 ## Planned-flight requests
 
 `flight_plan` and `flight_guest` are backed by a saved `planned_flights` row, so they don't follow the inline-context shape in step ①. The client sends only `{ planned_flight_id }` (~60 bytes) and the watcher loads the row itself with the service key — the same pattern `scan_requests` uses for the `enrich` intent, where `context.bottle_id` is resolved to a `bottles` row watcher-side.
