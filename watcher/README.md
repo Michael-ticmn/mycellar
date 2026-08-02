@@ -65,9 +65,21 @@ Folders under `BRIDGE_DIR` (`requests/`, `responses/`, `processed/`, `images/`) 
 
 By default (`AUTO_INVOKE=true` in `.env`), the watcher spawns a fresh `claude --print` session per request and pipes the prompt over stdin. The agent reads the request file, writes the response file at the path in `respond_to`, exits. No long-running session, no manual nudging. See [`src/agent.js`](src/agent.js).
 
-Flags used: `--print` (non-interactive), `--permission-mode acceptEdits` (auto-accept Read/Write), `--no-session-persistence` (don't accumulate session history). `cwd` is `BRIDGE_DIR`. `claude` resolves via PATH (override with `CLAUDE_BIN` in `.env`).
+Flags used: `--print` (non-interactive), **`--tools Read,Write`** (see below), `--permission-mode acceptEdits` (auto-accept the response-file write), `--no-session-persistence` (don't accumulate session history). `cwd` is `BRIDGE_DIR`. `claude` resolves via PATH (override with `CLAUDE_BIN` in `.env`).
 
 Note: do NOT pass `--bare`. It disables keychain reads, so the spawned `claude` would have no auth and fail with "Please run /login". Without `--bare`, `claude` uses the host user's existing OAuth session.
+
+**`--tools Read,Write` is a security boundary, not a tidiness measure.** The request file contains free text typed by whoever made the request — including an anonymous share-link guest, since `cellar27_share_create_pairing_request` is granted to `anon`. `src/render.js` delimits and neutralizes that text, but prompt injection isn't solved by escaping alone, so the agent also gets no other tools: no Bash, no WebFetch/WebSearch, no MCP. No command execution, no network egress. Combined with `cwd` = `BRIDGE_DIR` (reads outside it prompt, and `--print` auto-denies prompts), `.env` is out of reach even though this process holds those secrets.
+
+Note it must be `--tools`, which limits the available set — **not** `--allowedTools`, which only pre-approves tools and would leave Bash available. Before widening this, read Layer 9 in [`docs/SECURITY.md`](../docs/SECURITY.md); it includes a one-line regression check.
+
+### Concurrency and hung agents
+
+`MAX_CONCURRENT_AGENTS` (default 3) caps how many `claude` processes run at once; the rest queue FIFO. Five in-flight requests per user across a few users is otherwise a lot of simultaneous sessions on one laptop.
+
+A process that hangs is killed at `TIMEOUT_MINUTES + 2`, deliberately just after the DB-side stale-claim sweep gives up, so the row is recovered first and the process follows. Before this, the sweep freed the row but left the process alive indefinitely, holding memory and an API session.
+
+The queue is memory-only. If the watcher dies with items in it, those rows stay `picked_up` and the stale-claim sweep returns them to `pending` on restart — the recovery path that already exists.
 
 ### Manual fallback
 

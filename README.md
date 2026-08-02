@@ -8,19 +8,13 @@ This repo is a monorepo:
 |------|------|--------|
 | [`docs/`](docs/) | Static HTML/CSS/JS app, served by GitHub Pages | live |
 | [`watcher/`](watcher/) | Node service that bridges Supabase ↔ Claude Code | live |
-| [`supabase/migrations/`](supabase/migrations/) | SQL migrations for the Supabase project | 0001–0015 applied · **0016–0019 pending** |
+| [`supabase/migrations/`](supabase/migrations/) | SQL migrations for the Supabase project | 0001–0019 applied |
 | [`supabase/functions/`](supabase/functions/) | Supabase Edge Functions (Deno) | `guest-label` deployed |
 
 Migrations are applied by hand through the Supabase SQL editor — there is no
-migration runner wired up, so **committing one does not apply it**. Four are
-committed but not yet run:
-[`0016_share_access_hardening.sql`](supabase/migrations/0016_share_access_hardening.sql),
-[`0017_search_path_sweep.sql`](supabase/migrations/0017_search_path_sweep.sql),
-[`0018_atomic_pour_and_rls_perf.sql`](supabase/migrations/0018_atomic_pour_and_rls_perf.sql)
-and [`0019_guest_label_rate_limit.sql`](supabase/migrations/0019_guest_label_rate_limit.sql).
-They touch unrelated objects, so order within the set doesn't matter.
-
-Check what's applied at any time with:
+migration runner wired up, so **committing one does not apply it**. There is
+also no ledger table, so the only way to know what's live is to ask the
+database. Check any time with:
 
 ```
 node scripts/verify-migrations.mjs
