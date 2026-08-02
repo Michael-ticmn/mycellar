@@ -89,6 +89,8 @@ Two things to know:
 
 Dev builds are minified exactly like production, deliberately: the rebuild writes to the same committed artifact, and leaving an unminified bundle there would change what ships. Sourcemaps are emitted either way.
 
+**Stop the dev server before switching branches.** It watches `docs/js/` and writes to `docs/js/dist/app.bundle.js`, which is committed. A `git checkout` changes the source under it, the watcher rebuilds, and the resulting local modification blocks the checkout or the next merge — this happened on the very first use, aborting a merge with *"Please commit your changes or stash them"* over `app.bundle.js.map`. `Ctrl+C` first, or `git checkout -- docs/js/dist/` after.
+
 ## Deploying Edge Functions
 
 [`supabase/functions/`](supabase/functions/) is not covered by the frontend build or by GitHub Pages — functions deploy separately, and committing one does **not** ship it. Either use the Supabase dashboard (Edge Functions → Deploy a new function → via Editor, paste the file) or the CLI:
