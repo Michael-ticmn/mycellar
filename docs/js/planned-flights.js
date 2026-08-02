@@ -65,20 +65,11 @@ export async function requestFlightPlanEnrichment(plan) {
   const req = await createRequest({
     requestType: 'flight_plan',
     includeCellar: false,
-    context: {
-      planned_flight_id: plan.id,
-      title: plan.title,
-      occasion_date: plan.occasion_date,
-      theme: plan.theme,
-      guests: plan.guests,
-      narrative: plan.narrative,
-      picks: plan.picks,
-      // Carry the original ask through to the watcher prompt so the
-      // model anchors its food/prep suggestions on it instead of
-      // generating generics.
-      food_hint:  plan.food_hint  || null,
-      notes_hint: plan.notes_hint || null,
-    },
+    // Only the id — the watcher loads the row (title, theme, picks,
+    // narrative, food_hint, notes_hint) with its service key. Sending the
+    // flight inline used to blow the 4096-byte context cap on larger
+    // flights; see hydratePlanContext() in watcher/src/index.js.
+    context: { planned_flight_id: plan.id },
   });
   const response = await waitForResponse(req.id);
   const payload = response.payload || {};
@@ -109,16 +100,12 @@ export async function requestGuestWalkthrough(plan) {
   const req = await createRequest({
     requestType: 'flight_guest',
     includeCellar: false,
-    context: {
-      planned_flight_id: plan.id,
-      title: plan.title,
-      occasion_date: plan.occasion_date,
-      theme: plan.theme,
-      guests: plan.guests,
-      narrative: plan.narrative,
-      picks: plan.picks,
-      food: Array.isArray(plan.food) ? plan.food : [],
-    },
+    // Only the id — the watcher loads picks/narrative/food from the row.
+    // The kept-food filtering the comment above refers to is already
+    // persisted (the food editor writes deletions back before this runs,
+    // and the caller re-reads the row), so the fetched food matches what
+    // was previously sent inline.
+    context: { planned_flight_id: plan.id },
   });
   const response = await waitForResponse(req.id);
   const payload = response.payload || null;

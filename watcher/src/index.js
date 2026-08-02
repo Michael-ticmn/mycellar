@@ -243,6 +243,45 @@ function scheduleReconnect(name) {
   }, delay);
 }
 
+// flight_plan / flight_guest are backed by a saved planned_flights row. The
+// client used to ship the whole thing (picks + narrative + food) inline through
+// pairing_requests.context, which is capped at 4096 bytes by
+// pairing_requests_context_size — a flight with 5 food items hit 4367 B and the
+// insert failed outright. Clients now send just planned_flight_id and we load
+// the row here with the service key.
+//
+// Hydrating into row.context (rather than changing render.js) keeps the
+// renderer reading every field off the context exactly as before. Inline values
+// win over fetched ones, so a client still sending the full context behaves
+// identically — that's what lets the app and the watcher deploy independently.
+const PLAN_BACKED_TYPES = new Set(['flight_plan', 'flight_guest']);
+const PLAN_CONTEXT_FIELDS = [
+  'title', 'occasion_date', 'theme', 'guests',
+  'narrative', 'picks', 'food', 'food_hint', 'notes_hint',
+];
+
+async function hydratePlanContext(row) {
+  if (!PLAN_BACKED_TYPES.has(row.request_type)) return row;
+  const planId = row.context?.planned_flight_id;
+  if (!planId) return row;
+
+  const { data, error } = await sb.from('planned_flights')
+    .select('*').eq('id', planId).maybeSingle();
+  if (error || !data) {
+    // Fall back to whatever the client sent rather than failing the request.
+    err(`hydrate planned_flight ${planId}:`, error?.message || 'row not found');
+    return row;
+  }
+
+  const context = { ...(row.context || {}) };
+  let filled = 0;
+  for (const field of PLAN_CONTEXT_FIELDS) {
+    if (context[field] == null && data[field] != null) { context[field] = data[field]; filled++; }
+  }
+  log(`hydrated ${row.request_type} from planned_flights.${planId} (${filled} field(s))`);
+  return { ...row, context };
+}
+
 async function pickUp(table, row) {
   // Policy gate: allowlist + per-user rate limit. Reject pre-claim so
   // the request shows status=error to the client immediately, without
@@ -292,7 +331,7 @@ async function pickUp(table, row) {
   if (table === 'pairing_requests') {
     const fileName = `req-${claimed.id}.md`;
     const respondTo = join(CONFIG.dirs.responses, fileName);
-    const body = renderPairingRequest(claimed, respondTo, weather);
+    const body = renderPairingRequest(await hydratePlanContext(claimed), respondTo, weather);
     reqPath = join(CONFIG.dirs.requests, fileName);
     await writeFile(reqPath, body, 'utf8');
     log(`wrote pairing request ${reqPath}`);
