@@ -20,6 +20,18 @@ database. Check any time with:
 node scripts/verify-migrations.mjs
 ```
 
+That covers what PostgREST exposes — whether a function exists and how it
+behaves. It structurally **cannot** see `search_path` settings, CHECK
+constraints, RLS `WITH CHECK` clauses, or whether a function is SECURITY DEFINER
+or INVOKER, because those live in the system catalogs rather than the REST API.
+For those, paste [`supabase/verify/schema-check.sql`](supabase/verify/schema-check.sql)
+into the SQL editor; it returns one PASS/FAIL row per item with failures first.
+
+Worth using both. The gap between them is not academic: whether `0006` and
+`0007` had ever been applied sat unanswered for three months precisely because
+the Node verifier couldn't tell and re-running the files blind wouldn't have
+answered it either. One run of the SQL check settled it (both applied).
+
 Note two files share the number `0015` (`0015_guest_message_delete.sql` and
 `0015_planned_flight_intent.sql`). They touch unrelated objects so order didn't
 matter, and both are already applied — renumbering them now would only break the
