@@ -17,6 +17,17 @@ docs/config.local.js
 watcher/watcher.out.log*
 watcher/watcher.err.log*
 
+# Data snapshots. scripts/backup-data.mjs writes outside the repo by default,
+# but --out could point here, and these hold prices, notes and guest names.
+cellar27-backups/
+*-backup/
+
+# Headless-browser debugging output. A `git add -A` swept four of these in
+# once; they're generated at the repo root when a test run's cwd lands here.
+dom_*.html
+dom_*.log
+chrome*.log
+
 # OS / editor
 .DS_Store
 Thumbs.db
@@ -24,6 +35,9 @@ Thumbs.db
 .idea/
 
 # Private planning docs — kept on local disk, not pushed to GitHub.
+# REVIEW_FINDINGS.md is an unpatched-issue register for a live deployment;
+# it stays local until everything in it is fixed.
+REVIEW_FINDINGS.md
 STRATEGY.md
 BUILD_SPEC.md
 BUILD_LOG.md

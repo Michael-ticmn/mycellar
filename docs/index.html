@@ -2,6 +2,43 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <!-- CSP. Must stay ahead of every resource it governs, so it sits first.
+       GitHub Pages can't set response headers, so this is the only way to get
+       one — which also means `frame-ancestors` is unavailable (meta CSP
+       ignores it); clickjacking protection would need a real header.
+
+       Why bother when the app already escapes everything: this is the backstop
+       for the ~60 innerHTML sites that render sommelier narrative and scan
+       output. Escaping is the control; this is what's left if one site drifts.
+
+       Each source is load-bearing:
+         script-src   jsDelivr is the pinned + SRI-hashed supabase-js bundle.
+                      No 'unsafe-inline' — index.html has no inline script and
+                      no on* attributes, and config.local.js is injected as a
+                      src'd tag precisely to keep it that way.
+         style-src    'unsafe-inline' is required: the views and several render
+                      helpers use style="" attributes. Dropping it means
+                      removing those first.
+         img-src      data: for the QR library (canvas → toDataURL → <img>),
+                      blob: for the scan capture preview, supabase for signed
+                      label URLs.
+         connect-src  supabase REST + Realtime (wss) + the guest-label function.
+                      Wildcarded rather than pinned to the project ref so a
+                      config.local.js override still works in dev.
+       -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none';
+                 script-src 'self' https://cdn.jsdelivr.net;
+                 style-src 'self' 'unsafe-inline';
+                 img-src 'self' data: blob: https://*.supabase.co;
+                 connect-src 'self' https://*.supabase.co wss://*.supabase.co;
+                 font-src 'self';
+                 media-src 'self' blob:;
+                 manifest-src 'self';
+                 worker-src 'self';
+                 base-uri 'none';
+                 form-action 'self';
+                 object-src 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#1a0f0f" />
   <!-- Strip the URL fragment from outbound Referer headers so guest tokens
@@ -116,9 +153,12 @@
         <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
         <div class="row">
           <button type="submit">Sign in</button>
-          <button type="button" id="signup-btn" class="ghost">Sign up</button>
         </div>
         <p id="auth-error" class="error"></p>
+        <!-- No Sign up button: sign-ups are disabled in Supabase, so it could
+             only ever produce an error. Accounts are created from the
+             dashboard and added to cellar27_allowed_users. -->
+        <p class="muted auth-note">Invite only — accounts are created by the cellar owner.</p>
       </form>
     </div>
   </section>

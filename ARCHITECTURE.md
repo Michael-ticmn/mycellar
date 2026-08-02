@@ -84,9 +84,10 @@ The laptop only needs to be awake during step ③ (the AI reasoning window — t
 - **Phone uses anon key.** RLS scopes every row to the signed-in `user_id`. The service-role key never leaves `watcher/.env`.
 - **Sign-ups disabled** in Supabase. Only existing accounts (created from the dashboard) can sign in.
 - **DB-enforced allowlist.** Only user_ids listed in `cellar27_allowed_users` can INSERT into `pairing_requests` / `scan_requests` (RLS `WITH CHECK`). Watcher's `ALLOWED_USER_IDS` env stays as a redundant backstop.
-- **DB-enforced rate limit.** `cellar27_check_rate_limit(auth.uid())` in the same RLS check rejects any insert past 20 combined pairing+scan rows in the last 60 min.
+- **DB-enforced rate limit.** `cellar27_check_rate_limit(auth.uid())` in the same RLS check rejects any insert past 100 combined pairing+scan rows in the last 60 min (raised from 20 in `0005_security_tune.sql`).
 - **Concurrent in-flight cap.** `enforce_pending_request_cap` / `enforce_pending_scan_cap` triggers reject a 6th in-flight (`pending` + `picked_up`) row per user.
-- **Global daily Claude ceiling.** Watcher calls `cellar27_try_record_spawn(MAX_CLAUDE_CALLS_PER_DAY)` before every `claude --print` spawn; default 100/day across all users, atomic counter in `cellar27_watcher_metrics`. Resets at UTC midnight.
+- **Global daily Claude ceiling.** Watcher calls `cellar27_try_record_spawn(MAX_CLAUDE_CALLS_PER_DAY)` before every `claude --print` spawn; default 250/day across all users, atomic counter in `cellar27_watcher_metrics`. Resets at UTC midnight.
+- **Contained agent.** The spawned Claude runs with `--tools Read,Write` and `cwd` = the bridge dir, so request text — which can come from an anonymous share-link guest — reaches a session with no shell, no network, and no reach outside the bridge folder. See Layer 9 in `docs/SECURITY.md`.
 - **Stale-claim recovery.** `cellar27_sweep_stale_claims` resets timed-out `picked_up` rows to `pending` (up to 2 retries) before marking them `error`.
 - **Size CHECK constraints** on user-supplied jsonb (`context` ≤ 4 KB, `cellar_snapshot` ≤ 65 KB, `image_paths` ≤ 4 KB) so a runaway phone payload can't bloat a row.
 
@@ -118,6 +119,15 @@ Same flow with two extras:
 - **Watcher downloads** the images to `~/cellar27-bridge/images/`, references those local paths in the markdown so Claude can read them with vision.
 - Response includes both **structured fields** (producer, varietal, vintage…) and **enrichment** (tasting notes, food pairings, producer background, serving recs), all packed into `scan_responses.extracted`.
 
-## What about share / QR (planned, not yet built)?
+## What about share / QR?
 
-Same shape but read-only and anonymous: a short-lived `share_links` token grants a guest's anonymous Supabase client `EXECUTE` on a `SECURITY DEFINER` function that returns sanitized bottle data for the owner. No mutations possible, no laptop compute consumed.
+Built — migrations 0008–0011 (links, AI flows, creation, hardening), 0013 (the Tonight plan view), 0014/0015 (guest → host messages), 0016 (access tightening).
+
+A short-lived `share_links` token grants a guest's anonymous Supabase client `EXECUTE` on `SECURITY DEFINER` functions that return sanitized bottle data for the owner — price, notes, storage location, label paths and `user_id` are all withheld. Guests get their own AI budget (`share_links.ai_quota`, claimed atomically) rather than the owner's, paced at one request per 2 seconds per link.
+
+Two things guests *can* write, both through validating RPCs rather than table access:
+
+- `pairing_requests`, via `cellar27_share_create_pairing_request` — bounded by the link's quota, so a guest can consume laptop compute. That's the point of the feature; the ceiling is the quota the owner set when creating the link.
+- `guest_messages`, via `cellar27_share_create_message` — AI results and pour notes sent back to the host. No AI cost, paced and capped per link.
+
+Everything a link grants dies with it: revoke or let it expire and the bottle list, the Tonight plan, the responses, and the label photos all stop resolving together.

@@ -282,11 +282,20 @@ async function hydratePlanContext(row) {
   return { ...row, context };
 }
 
-async function pickUp(table, row) {
-  // Policy gate: allowlist + per-user rate limit. Reject pre-claim so
-  // the request shows status=error to the client immediately, without
-  // spawning claude.
-  const denied = denyReason(row.user_id);
+// isRetry marks a row the stale-claim sweep sent back to 'pending'. It's the
+// same user request being processed again, so it must not consume a second
+// rate-limit slot. (It does still consume a daily-ceiling slot, and should:
+// that counter measures actual claude spawns, and a retry is a real one.)
+async function pickUp(table, row, { isRetry = false } = {}) {
+  // Policy gate: allowlist + rate limit. Reject pre-claim so the request shows
+  // status=error to the client immediately, without spawning claude.
+  const denied = denyReason(row.user_id, {
+    // Guest-originated rows carry share_link_id and are already bounded by the
+    // link's ai_quota and the per-link pacing guard; keep the watcher backstop
+    // per-link too rather than billing it to the host.
+    subject: row.share_link_id ? `share:${row.share_link_id}` : row.user_id,
+    record: !isRetry,
+  });
   if (denied) {
     log(`policy deny ${table}.${row.id}: ${denied}`);
     await sb.from(table).update({
@@ -452,11 +461,32 @@ function watchResponses() {
   responsesWatcher = watcher;
 }
 
+// The response file is written by the agent, so its frontmatter is agent
+// output — not a trusted identifier. The filename, by contrast, is ours: we
+// created it as `<prefix>-<claimed.id>.md` and told the agent to write there.
+// Requiring them to match means a hallucinated (or injected) request_id can't
+// attach a response to somebody else's request, or archive the wrong file.
+function requestIdFromFilename(path, prefix) {
+  const m = basename(path).match(
+    new RegExp(`^${prefix}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.md$`, 'i'));
+  return m ? m[1].toLowerCase() : null;
+}
+
+function resolveRequestId(path, prefix, frontmatterId) {
+  const fromName = requestIdFromFilename(path, prefix);
+  if (!fromName) throw new Error(`unparseable response filename: ${basename(path)}`);
+  const claimed = String(frontmatterId || '').trim().toLowerCase();
+  if (claimed && claimed !== fromName) {
+    throw new Error(
+      `request_id mismatch in ${basename(path)}: frontmatter says ${claimed}, filename says ${fromName}`);
+  }
+  return fromName;
+}
+
 async function ingestPairingResponse(path) {
   const text = await readFile(path, 'utf8');
   const parsed = parsePairingResponse(text);
-  const requestId = parsed.frontmatter.request_id;
-  if (!requestId) throw new Error(`no request_id in ${path}`);
+  const requestId = resolveRequestId(path, 'req', parsed.frontmatter.request_id);
 
   const { error: insErr } = await sb.from('pairing_responses').insert({
     request_id: requestId,
@@ -478,8 +508,7 @@ async function ingestPairingResponse(path) {
 async function ingestScanResponse(path) {
   const text = await readFile(path, 'utf8');
   const parsed = parseScanResponse(text);
-  const requestId = parsed.frontmatter.request_id;
-  if (!requestId) throw new Error(`no request_id in ${path}`);
+  const requestId = resolveRequestId(path, 'scan', parsed.frontmatter.request_id);
 
   // scan_responses doesn't have a `details` column yet — pack details into
   // `extracted` for add intents, into `match_candidates` slot? No — cleaner:
@@ -542,7 +571,7 @@ async function sweepStaleClaims() {
     const { data: full, error: fetchErr } = await sb
       .from(row.table_name).select('*').eq('id', row.request_id).single();
     if (fetchErr || !full) { err(`refetch retry row:`, fetchErr); continue; }
-    try { await pickUp(row.table_name, full); }
+    try { await pickUp(row.table_name, full, { isRetry: true }); }
     catch (e) { err(`retry pickUp ${row.request_id}:`, e); }
   }
 }

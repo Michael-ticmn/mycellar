@@ -23,6 +23,8 @@ const SHELL = [
   './views/drink-now.html',
   './views/share.html',
   './views/guest.html',
+  './views/planned.html',
+  './views/bottle.html',
   './vendor/qrcode.min.js',
   './manifest.webmanifest',
   './icon.svg',
@@ -40,11 +42,32 @@ self.addEventListener('install', (event) => {
   // the browser's HTTP cache. Without it, addAll happily caches stale
   // bytes that the browser had from a prior visit — symptom is "new
   // version label, but CSS/view changes haven't taken effect."
-  event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) =>
-      cache.addAll(SHELL.map((url) => new Request(url, { cache: 'reload' })))
-    )
-  );
+  // Individual put()s rather than addAll(), for two reasons.
+  //
+  // 1. addAll is one atomic batch, and it rejects with InvalidAccessError
+  //    ("Entry already exists") if anything else writes the same cache key
+  //    while the batch is open. That happens on a first visit to a route whose
+  //    view is also in SHELL — the page fetches views/guest.html, the fetch
+  //    handler below put()s it, and the concurrent addAll blows up. Install
+  //    then fails entirely: no offline shell, and no update banner until a
+  //    later visit happens not to race.
+  // 2. addAll is all-or-nothing, so one 404 in SHELL would sink the whole
+  //    install. A missing view is worth skipping, not failing over.
+  //
+  // cache:'reload' still bypasses the HTTP cache, so we don't install stale
+  // bytes — that part is unchanged and load-bearing.
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_VERSION);
+    await Promise.all(SHELL.map(async (url) => {
+      try {
+        const res = await fetch(new Request(url, { cache: 'reload' }));
+        if (res && res.ok) await cache.put(url, res);
+        else console.warn('[cellar27 sw] skipped', url, res && res.status);
+      } catch (e) {
+        console.warn('[cellar27 sw] failed to cache', url, e);
+      }
+    }));
+  })());
 });
 
 self.addEventListener('activate', (event) => {

@@ -54,26 +54,36 @@ export async function listGuestMessages(shareLinkId) {
   return data || [];
 }
 
-// Owner-side: every share link this user has ever created (active,
-// revoked, expired). Used to render historical guest activity grouped
-// by tasting session — guest_messages outlive the link's TTL so the
-// host can revisit prior nights.
+// Owner-side: share links this user has created (active, revoked, expired).
+// Used to render historical guest activity grouped by tasting session —
+// guest_messages outlive the link's TTL so the host can revisit prior nights.
+//
+// Bounded: the Share page renders every one of these, so an unbounded query
+// would grow the payload with every tasting held. A host who wants a night
+// from 50 tastings ago is past what this page is for.
+const MAX_SHARE_LINKS = 50;
+const MAX_GUEST_MESSAGES = 500;
+
 export async function listAllOwnerShareLinks() {
   const { data, error } = await sb
     .from('share_links')
     .select('id, token, created_at, expires_at, ai_quota, ai_used, revoked_at')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(MAX_SHARE_LINKS);
   if (error) throw error;
   return data || [];
 }
 
-// Owner-side: every guest message across all the host's share links.
-// RLS auto-filters to this user's rows. Newest first.
+// Owner-side: guest messages across the host's share links. RLS auto-filters
+// to this user's rows. Newest first, bounded for the same reason as above —
+// and messages are the bigger payload of the two (each carries a jsonb
+// recommendations/narrative blob).
 export async function listAllOwnerGuestMessages() {
   const { data, error } = await sb
     .from('guest_messages')
     .select('id, share_link_id, created_at, guest_name, kind, payload')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(MAX_GUEST_MESSAGES);
   if (error) throw error;
   return data || [];
 }

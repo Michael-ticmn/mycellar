@@ -1,6 +1,7 @@
 // Guest-side helpers: read a shared cellar via a share-link token. No auth
 // session required — calls SECURITY DEFINER RPCs granted to the anon role.
-// See supabase/migrations/0006_share_links.sql + 0007_share_links_ai.sql.
+// See supabase/migrations/0008_share_links.sql + 0009_share_links_ai.sql
+// (hardened in 0011, extended in 0013/0014, access-tightened in 0016).
 
 import { sb } from './supabase-client.js';
 
@@ -109,9 +110,11 @@ async function createAndAwait(token, requestType, context) {
 
 function prettyShareError(err) {
   const m = err?.message || String(err);
-  if (m.includes('quota_exhausted')) return 'This share link has used up its request budget.';
-  if (m.includes('link_invalid'))    return 'This share link is invalid, revoked, or has expired.';
-  if (m.includes('rate_too_fast'))   return 'Slow down — wait a couple of seconds before sending another request.';
+  if (m.includes('quota_exhausted'))      return 'This share link has used up its request budget.';
+  if (m.includes('link_invalid'))         return 'This share link is invalid, revoked, or has expired.';
+  if (m.includes('rate_too_fast'))        return 'Slow down — wait a couple of seconds before sending another request.';
+  if (m.includes('message_limit_reached')) return 'This tasting has reached its limit for notes sent to the host.';
+  if (m.includes('payload_too_large'))    return 'That note is too long to send.';
   return m;
 }
 

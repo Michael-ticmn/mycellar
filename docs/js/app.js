@@ -1,5 +1,5 @@
-import { getSession, signIn, signUp, onAuthChange } from './auth.js';
-import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, updateBottle, saveEnrichment, findDuplicate } from './bottles.js';
+import { getSession, signIn, onAuthChange } from './auth.js';
+import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, getBottlesByIds, updateBottle, saveEnrichment, findDuplicate } from './bottles.js';
 import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
 import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } from './pairings.js';
 import {
@@ -146,8 +146,9 @@ async function mountShare() {
       if (!confirm('Revoke this share link? Anyone using it will lose access immediately.')) return;
       try {
         await revokeShareLink(link.id);
+        invalidateActiveShareLink();
         renderActive(null);
-      } catch (e) { alert(e.message); }
+      } catch (e) { showToast(friendlyError(e)); }
     };
     $('#share-copy').onclick = async () => {
       try { await navigator.clipboard.writeText(url); showToast('Link copied'); }
@@ -155,9 +156,12 @@ async function mountShare() {
     };
   };
 
+  // Deliberately uncached: this is the page that creates and revokes links, so
+  // it should always show the real current state.
   let activeLink = null;
   try {
-    activeLink = await getActiveShareLink();
+    invalidateActiveShareLink();
+    activeLink = await cachedActiveShareLink();
     renderActive(activeLink);
   } catch (e) { errEl.textContent = e.message; }
 
@@ -178,6 +182,7 @@ async function mountShare() {
     btn.disabled = true;
     try {
       const link = await createShareLink({ ttlHours, aiQuota });
+      invalidateActiveShareLink();
       activeLink = link;
       renderActive(link);
       await renderGuestActivity(link);
@@ -292,7 +297,7 @@ async function renderGuestActivity(activeLink) {
         btn.disabled = false;
         const errEl = card?.querySelector('.guest-activity-error');
         if (errEl) { errEl.hidden = false; errEl.textContent = err.message; }
-        else alert(err.message);
+        else showToast(friendlyError(err));
       }
     });
   });
@@ -473,12 +478,28 @@ function ctxSummary(ctx, requestType) {
 // Refresh the unread-pip on the Share nav icon. Called on app boot,
 // after route changes, and after any owner-side action that might
 // affect the count.
+// The active share link changes only when the owner creates or revokes one, but
+// this ran on every route change — two queries per navigation. Cache it for a
+// minute and let the mutating paths clear it, so moving around the app costs
+// one count query instead of two round-trips.
+let _activeLinkCache = null; // { at, link }
+const ACTIVE_LINK_TTL_MS = 60_000;
+async function cachedActiveShareLink() {
+  if (_activeLinkCache && Date.now() - _activeLinkCache.at < ACTIVE_LINK_TTL_MS) {
+    return _activeLinkCache.link;
+  }
+  const link = await getActiveShareLink();
+  _activeLinkCache = { at: Date.now(), link };
+  return link;
+}
+function invalidateActiveShareLink() { _activeLinkCache = null; }
+
 async function refreshShareNavBadge() {
   const navEl = $('nav a[data-route="share"]');
   if (!navEl) return;
   navEl.querySelector('.share-nav-badge')?.remove();
   let link;
-  try { link = await getActiveShareLink(); } catch { return; }
+  try { link = await cachedActiveShareLink(); } catch { return; }
   if (!link) return;
   const since = getLastSeenGuestActivity(link.id);
   let count;
@@ -547,30 +568,73 @@ async function mountGuest(token) {
   try { tonightPlan = await getSharedPlannedFlight(token); }
   catch { /* RPC failed — silently skip the Tonight tab */ }
   if (tonightPlan) {
-    const tonightTab  = $('.guest-tab[data-tab="tonight"]', tabs);
-    const tonightPane = $('.guest-pane[data-pane="tonight"]');
-    const cellarTab   = $('.guest-tab[data-tab="cellar"]', tabs);
-    if (tonightTab)  tonightTab.hidden = false;
-    if (tonightPane) tonightPane.hidden = false;
-    if (cellarTab)   cellarTab.classList.remove('active');
-    if (tonightTab)  tonightTab.classList.add('active');
-    // Hide non-Tonight panes by default until the user clicks another tab.
-    $$('.guest-pane').forEach((p) => { p.hidden = p.dataset.pane !== 'tonight'; });
+    const tonightTab = $('.guest-tab[data-tab="tonight"]', tabs);
+    if (tonightTab) {
+      tonightTab.hidden = false;
+      // selectTab does the rest: active class, aria-selected, roving tabindex,
+      // and hiding every other pane.
+      selectTab(tonightTab);
+    }
     renderTonightPane($('#guest-tonight-root'), tonightPlan, token);
   }
 
-  // Modal close (backdrop or ✕)
+  // Modal close (backdrop or ✕), Escape, and a focus trap. The lightbox on the
+  // owner side already closed on Escape; this one didn't, which left keyboard
+  // and screen-reader users stuck behind a dialog with no advertised way out.
+  const modal = $('#guest-bottle-modal');
   $$('#guest-bottle-modal [data-close]').forEach((el) => {
-    el.addEventListener('click', () => { $('#guest-bottle-modal').hidden = true; });
+    el.addEventListener('click', () => closeGuestBottleModal());
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!modal || modal.hidden) return;
+    if (e.key === 'Escape') { closeGuestBottleModal(); return; }
+    if (e.key !== 'Tab') return;
+    // Keep Tab inside the dialog while it's open.
+    const focusable = $$(
+      'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      modal,
+    ).filter((el) => el.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last  = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
 
-  // Tabs
-  $$('.guest-tab', tabs).forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const target = btn.dataset.tab;
-      $$('.guest-tab', tabs).forEach((b) => b.classList.toggle('active', b === btn));
-      $$('.guest-pane').forEach((p) => { p.hidden = p.dataset.pane !== target; });
+  // Tabs. selectTab owns all three bits of state the role="tab" contract
+  // requires — the active class, aria-selected, and the roving tabindex — so
+  // they can't drift apart.
+  // Function declaration, not a const: the Tonight-tab setup above runs before
+  // this point and calls it.
+  function selectTab(btn, { focus = false } = {}) {
+    const target = btn.dataset.tab;
+    $$('.guest-tab', tabs).forEach((b) => {
+      const on = b === btn;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+      b.tabIndex = on ? 0 : -1;
     });
+    $$('.guest-pane').forEach((p) => { p.hidden = p.dataset.pane !== target; });
+    if (focus) btn.focus();
+  }
+  const visibleTabs = () => $$('.guest-tab', tabs).filter((b) => !b.hidden);
+  $$('.guest-tab', tabs).forEach((btn) => {
+    btn.addEventListener('click', () => selectTab(btn));
+  });
+  // Arrow / Home / End movement, per the WAI-ARIA tabs pattern. Wrapping, and
+  // skipping the Tonight tab while it's hidden.
+  tabs.addEventListener('keydown', (e) => {
+    const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
+    if (!keys.includes(e.key)) return;
+    const list = visibleTabs();
+    const i = list.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    const next = e.key === 'Home'  ? 0
+               : e.key === 'End'   ? list.length - 1
+               : e.key === 'ArrowRight' ? (i + 1) % list.length
+               : (i - 1 + list.length) % list.length;
+    selectTab(list[next], { focus: true });
   });
 
   // After every successful AI request: re-fetch quota and update the banner.
@@ -991,9 +1055,21 @@ function wirePourNoteWidgets(root, token, plannedFlightId) {
   });
 }
 
+// Remembers what had focus before the dialog opened so closing can restore it,
+// rather than dumping focus back at the top of the document.
+let _guestModalReturnFocus = null;
+function closeGuestBottleModal() {
+  const modal = $('#guest-bottle-modal');
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  _guestModalReturnFocus?.focus?.();
+  _guestModalReturnFocus = null;
+}
+
 function showGuestBottleDetail(b, token) {
   const modal = $('#guest-bottle-modal');
   if (!modal) return;
+  _guestModalReturnFocus = document.activeElement;
   const sub = [b.varietal, b.vintage, b.region, b.country].filter(Boolean).map(escapeHtml).join(' · ');
   const window = (b.drink_window_start && b.drink_window_end)
     ? `${b.drink_window_start}–${b.drink_window_end}` : '—';
@@ -1026,6 +1102,9 @@ function showGuestBottleDetail(b, token) {
     </dl>
     ${detailsBlock}`;
   modal.hidden = false;
+  // Move focus into the dialog so the trap has something to hold and a screen
+  // reader lands on the content rather than staying behind it.
+  $('.guest-modal-close', modal)?.focus();
 
   // Label photo, fetched on demand. The signed URL is minted by the
   // guest-label Edge Function and lives ~10 min, so it's requested per open
@@ -1034,13 +1113,17 @@ function showGuestBottleDetail(b, token) {
   // fully usable without it, so nothing here blocks rendering.
   const slot = $('#guest-bottle-detail [data-photo-slot]');
   if (slot && token && b.id) {
+    // Show a placeholder while the signed URL is minted, so the modal doesn't
+    // silently reflow when the photo drops in. Hidden again if there's no
+    // photo, which is a normal outcome, not an error worth showing.
+    slot.hidden = false;
+    slot.innerHTML = '<p class="muted guest-photo-pending">Loading label photo…</p>';
     guestLabelUrl(token, b.id).then((url) => {
-      if (!url) return;
       // Guard against a slow response landing after the guest has closed the
       // modal or clicked through to a different bottle.
       if (modal.hidden || !slot.isConnected) return;
+      if (!url) { slot.hidden = true; slot.innerHTML = ''; return; }
       slot.innerHTML = `<img src="${escapeAttr(url)}" alt="Label of ${escapeAttr(b.producer || 'this bottle')}" loading="lazy">`;
-      slot.hidden = false;
     });
   }
 }
@@ -1196,7 +1279,7 @@ function bottleListRowHTML(b) {
     b.region ? escapeHtml(b.region) : '',
   ].filter(Boolean).join(' · ');
   return `
-    <article class="bottle-row" data-bottle-id="${b.id}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
+    <article class="bottle-row" data-bottle-id="${escapeAttr(b.id)}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
       <div class="bottle-row-main">
         <h3 class="bottle-row-title">${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
         <p class="bottle-row-sub muted">${subParts}</p>
@@ -1205,7 +1288,7 @@ function bottleListRowHTML(b) {
         <span class="qty">×${b.quantity}</span>
         ${window ? `<span class="window muted">${window}</span>` : ''}
       </div>
-      <button class="bottle-row-pour" data-pour="${b.id}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
+      <button class="bottle-row-pour" data-pour="${escapeAttr(b.id)}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
     </article>`;
 }
 
@@ -1214,7 +1297,7 @@ function bottleCardHTML(b) {
     ? `${b.drink_window_start}–${b.drink_window_end}`
     : '—';
   return `
-    <article class="bottle-card" data-bottle-id="${b.id}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
+    <article class="bottle-card" data-bottle-id="${escapeAttr(b.id)}" data-style="${escapeAttr(b.style || '')}" tabindex="0">
       <div class="bottle-photo placeholder">${escapeHtml((b.producer || '?')[0])}</div>
       <div class="bottle-meta">
         <h3>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
@@ -1227,8 +1310,8 @@ function bottleCardHTML(b) {
           <span class="window">drink ${window}</span>
         </p>
         <div class="actions">
-          <button data-pour="${b.id}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
-          <button data-delete="${b.id}" class="ghost">Delete</button>
+          <button data-pour="${escapeAttr(b.id)}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour</button>
+          <button data-delete="${escapeAttr(b.id)}" class="ghost">Delete</button>
         </div>
       </div>
     </article>`;
@@ -1240,13 +1323,13 @@ async function onPour(e) {
     await pourBottle(id);
     showToast('Poured. Undo?', { actionLabel: 'Undo', onAction: () => undoPour(id).then(() => render()) });
     render();
-  } catch (err) { alert(err.message); }
+  } catch (err) { showToast(friendlyError(err)); }
 }
 async function onDelete(e) {
   const id = e.currentTarget.dataset.delete;
   if (!confirm('Delete this bottle?')) return;
   try { await deleteBottle(id); render(); }
-  catch (err) { alert(err.message); }
+  catch (err) { showToast(friendlyError(err)); }
 }
 
 // ── Add / Edit bottle (manual) ────────────────────────────────────
@@ -1306,7 +1389,7 @@ async function mountAddBottle(bottleId) {
         // fills in tasting notes etc without the user clicking anything.
         autoEnrich(created.id);
       }
-    } catch (err) { alert(err.message); }
+    } catch (err) { showToast(friendlyError(err)); }
   });
 }
 
@@ -1367,6 +1450,25 @@ function collectBottleFields(fd) {
 // fills, holds, then drains. Inline SVG with SMIL animation so we
 // don't need any extra JS lifecycle.
 function pourLoaderHTML(msg = '') {
+  // Respect prefers-reduced-motion. This has to happen here rather than in CSS:
+  // the animation is SMIL (<animate> elements), and the `display` property
+  // doesn't apply to SVG animation elements, so no stylesheet rule can stop it.
+  // Emit a static half-full glass instead — it still reads as "working", it
+  // just doesn't move. Checked per render, so a mid-session OS change is picked
+  // up on the next request.
+  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  if (reduceMotion) {
+    const staticSvg = `
+    <svg class="pour-loader-svg" viewBox="0 0 36 36" aria-hidden="true" focusable="false">
+      <g transform="rotate(-50 14 14)" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+        <path d="M11 3 h6 v3 c1 0.4 1.4 1.5 1.4 3 v8 a1.4 1.4 0 0 1 -1.4 1.4 h-6 a1.4 1.4 0 0 1 -1.4 -1.4 v-8 c0 -1.5 0.4 -2.6 1.4 -3 z" />
+      </g>
+      <path d="M17.3 23 h8.4 l-1.3 3.5 a5.2 5.2 0 0 1 -5.8 0 z" fill="currentColor" opacity="0.85" />
+      <path d="M16 21 h11 l-1.3 5.5 a5.2 5.2 0 0 1 -8.4 0 z M21.5 30.4 V34 M19 34 h6"
+            fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" />
+    </svg>`;
+    return `<div class="pour-loader" role="status" aria-live="polite">${staticSvg}${msg ? `<p class="muted pour-loader-msg">${escapeHtml(msg)}</p>` : ''}</div>`;
+  }
   const svg = `
     <svg class="pour-loader-svg" viewBox="0 0 36 36" aria-hidden="true" focusable="false">
       <defs>
@@ -1406,13 +1508,49 @@ async function withBusySubmit(form, resultEl, msg, fn) {
   const submitBtn = form.querySelector('button[type="submit"], button:not([type])');
   if (submitBtn) submitBtn.disabled = true;
   setBusy(resultEl, msg);
+
+  // These waits run up to five minutes against a laptop that has to be awake.
+  // A loader that never changes is indistinguishable from a hung app, so count
+  // up, and past a minute say plainly what the hold-up might be.
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const el = resultEl.querySelector('.pour-loader-msg');
+    if (!el) return;
+    const secs = Math.round((Date.now() - started) / 1000);
+    const elapsed = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
+    el.textContent = secs > 60
+      ? `${msg} · ${elapsed} — still working. This needs the cellar laptop awake.`
+      : `${msg} · ${elapsed}`;
+  }, 1000);
+
   try {
     await fn();
   } catch (err) {
-    resultEl.innerHTML = `<p class="error">${escapeHtml(err?.message || String(err))}</p>`;
+    resultEl.innerHTML = `<p class="error">${escapeHtml(friendlyError(err))}</p>`;
   } finally {
+    clearInterval(timer);
     if (submitBtn) submitBtn.disabled = false;
   }
+}
+
+// Owner-side counterpart to prettyShareError in guest.js. Postgres and Supabase
+// speak in constraint names; the person reading has to act on it. Anything
+// unrecognized passes through unchanged rather than being flattened into a
+// useless "something went wrong".
+function friendlyError(err) {
+  const m = err?.message || String(err);
+  if (/row-level security/i.test(m)) {
+    return "This account isn't allowed to make AI requests, or it has hit the hourly limit. See docs/SECURITY.md.";
+  }
+  if (/Too many pending requests/i.test(m)) return 'Too many requests already in flight — wait for one to finish.';
+  if (/Too many pending scans/i.test(m))    return 'Too many scans already in flight — review or dismiss one first.';
+  if (/Daily AI capacity/i.test(m))         return m;  // already written for a human
+  if (/pairing_requests_context_size/i.test(m)) return 'That request is too long — shorten the notes and try again.';
+  if (/Timed out waiting/i.test(m)) {
+    return `${m} The cellar laptop may be asleep; the answer will appear here if it lands later.`;
+  }
+  if (/Failed to fetch|NetworkError/i.test(m)) return 'Network problem — check your connection and try again.';
+  return m;
 }
 
 // In-memory cache of the most recent rendered AI result panel per view,
@@ -1438,18 +1576,27 @@ function restoreResult(key, resultEl) {
       if (id) location.hash = `#/bottle/${id}`;
     });
   });
-  // The Save-flight form needs the original response object to function
-  // and we don't keep that across navigations — strip it so the user
-  // doesn't click an inert button. Resubmitting the form yields a fresh
-  // savable result.
-  $$('.save-flight', resultEl).forEach((n) => n.remove());
+  // The Save-flight form needs the original response object, which we don't
+  // keep across navigations, so the button can't work here. Replace it with a
+  // line saying so — removing it outright meant the user came back from a
+  // bottle and found the Save option had silently vanished, with no way to
+  // tell whether they'd already saved.
+  $$('.save-flight', resultEl).forEach((n) => {
+    const note = document.createElement('p');
+    note.className = 'muted save-flight-stale';
+    note.textContent = 'Re-run the flight to save it — this is a restored view of your last result.';
+    n.replaceWith(note);
+  });
   return true;
 }
 async function renderRecommendations(resultEl, response, opts = {}) {
   const recs = Array.isArray(response.recommendations) ? response.recommendations : [];
-  const cards = await Promise.all(recs.map(async (r) => {
-    let bottle = null;
-    try { bottle = await getBottle(r.bottle_id); } catch { /* unknown id */ }
+  // One query for every pick, not one per pick. Ids the model invented (or that
+  // point at a since-deleted bottle) are simply absent from the map, which is
+  // the same "Unknown bottle" case the per-pick fetch produced on error.
+  const byId = await getBottlesByIds(recs.map((r) => r.bottle_id));
+  const cards = recs.map((r) => {
+    const bottle = byId.get(r.bottle_id) || null;
     if (!bottle) {
       return `<article class="bottle-card"><div class="bottle-meta">
         <h3 class="muted">Unknown bottle</h3>
@@ -1465,7 +1612,7 @@ async function renderRecommendations(resultEl, response, opts = {}) {
         <p><span class="qty">${escapeHtml(r.confidence || 'medium')}</span> · ${escapeHtml(r.reasoning || '')}</p>
       </div>
     </article>`;
-  }));
+  });
   const narrative = narrativeBlockHTML(response.narrative, { heading: 'Narrative' });
   const saveSection = opts.savable ? saveFlightFormHTML() : '';
   resultEl.innerHTML = `
@@ -1613,7 +1760,7 @@ function getSavedRate() {
 let _speakingBtn = null;
 function toggleSpeak(text, btn) {
   const synth = window.speechSynthesis;
-  if (!synth) { alert('Read-aloud not supported on this browser.'); return; }
+  if (!synth) { showToast("Read-aloud isn't supported on this browser."); return; }
   const wasThis = _speakingBtn === btn;
   if (synth.speaking || synth.pending) {
     synth.cancel();
@@ -1903,8 +2050,14 @@ async function mountPlannedDetail(root, id) {
 
 async function pollForEnrichment(root, id) {
   const deadline = Date.now() + 5 * 60_000;
+  // Back off rather than hammering a fixed 4s for the full five minutes: the
+  // enrichment usually lands in the first 30–90s, so a flat interval spent ~75
+  // queries to catch something the first handful almost always got. Start
+  // tight, ease to 20s. Same shape as the guest-side poll in guest.js.
+  let delay = 4000;
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 4000));
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(Math.round(delay * 1.5), 20_000);
     // Stop if the user navigated away.
     if (!document.body.contains(root) || location.hash !== `#/planned/${id}`) return;
     let fresh;
@@ -1922,10 +2075,8 @@ async function renderPlannedDetail(root, plan) {
   // Pre-fetch each pick's bottle so we can show producer/varietal next to
   // its prep row. Tolerant of deleted bottles (unknown id renders muted).
   const picks = Array.isArray(plan.picks) ? plan.picks : [];
-  const bottles = await Promise.all(picks.map(async (p) => {
-    try { return { pick: p, bottle: await getBottle(p.bottle_id) }; }
-    catch { return { pick: p, bottle: null }; }
-  }));
+  const pickById = await getBottlesByIds(picks.map((p) => p.bottle_id));
+  const bottles = picks.map((p) => ({ pick: p, bottle: pickById.get(p.bottle_id) || null }));
 
   const headerHTML = `
     <header class="planned-header">
@@ -2009,7 +2160,7 @@ async function renderPlannedGuestSection(root, plan) {
   if (!body) return;
 
   let link;
-  try { link = await getActiveShareLink(); }
+  try { link = await cachedActiveShareLink(); }
   catch (e) {
     body.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
     return;
@@ -2170,6 +2321,23 @@ function wirePlannedDetail(root, plan) {
     errEl.hidden = !msg;
     errEl.textContent = msg || '';
   };
+  // Every field on this page saves on blur/change with no submit button, so
+  // without an acknowledgement a successful save and a silent failure look
+  // identical. Announce it politely so it's picked up by a screen reader too.
+  let savedTimer = null;
+  const showSaved = () => {
+    let el = $('.planned-saved', root);
+    if (!el) {
+      el = document.createElement('span');
+      el.className = 'muted planned-saved';
+      el.setAttribute('role', 'status');
+      el.setAttribute('aria-live', 'polite');
+      errEl?.parentElement?.insertBefore(el, errEl);
+    }
+    el.textContent = 'Saved ✓';
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => { el.textContent = ''; }, 2000);
+  };
 
   // Bottle-card click → bottle detail
   $$('[data-bottle-id]', root).forEach((node) => {
@@ -2184,7 +2352,7 @@ function wirePlannedDetail(root, plan) {
     if (!el) continue;
     el.addEventListener('change', async () => {
       const v = el.value.trim();
-      try { await updatePlannedFlight(id, { [field]: v || null }); showErr(''); }
+      try { await updatePlannedFlight(id, { [field]: v || null }); showErr(''); showSaved(); }
       catch (e) { showErr(e.message); }
     });
   }
@@ -2199,7 +2367,7 @@ function wirePlannedDetail(root, plan) {
     }));
   };
   const persistFood = async () => {
-    try { await updatePlannedFlight(id, { food: collectFood() }); showErr(''); }
+    try { await updatePlannedFlight(id, { food: collectFood() }); showErr(''); showSaved(); }
     catch (e) { showErr(e.message); }
   };
 
@@ -2244,7 +2412,7 @@ function wirePlannedDetail(root, plan) {
     return { chill, open_by, decanters: originalDecanters, glassware, notes };
   };
   const persistPrep = async () => {
-    try { await updatePlannedFlight(id, { prep: collectPrep() }); showErr(''); }
+    try { await updatePlannedFlight(id, { prep: collectPrep() }); showErr(''); showSaved(); }
     catch (e) { showErr(e.message); }
   };
   $$('[data-prep-field]', root).forEach((el) => {
@@ -2545,7 +2713,7 @@ function mountManage() {
         await pourBottle(bottleId);
         showToast('Poured. Undo?', { actionLabel: 'Undo', onAction: () => undoPour(bottleId).catch(() => {}) });
         location.hash = '#/cellar';
-      } catch (err) { alert(err.message); }
+      } catch (err) { showToast(friendlyError(err)); }
     }
   });
 
@@ -2603,7 +2771,6 @@ function mountManage() {
 }
 
 function renderAddReviewHTML(ext, details, imagePaths, narrative) {
-  const sel = (val, opts) => opts.map((o) => `<option value="${o}" ${ext[o] === val || val === o ? 'selected' : ''}>${o}</option>`).join('');
   return `
     <h2>Review extracted details</h2>
     <p class="muted">Confidence: <strong>${escapeHtml(ext.confidence || 'unknown')}</strong>. Edit any field before saving.</p>
@@ -2614,7 +2781,7 @@ function renderAddReviewHTML(ext, details, imagePaths, narrative) {
         <input name="varietal" required value="${escapeAttr(ext.varietal || '')}" list="varietal-options-scan" />
         <datalist id="varietal-options-scan">${VARIETAL_NAMES.map((v) => `<option value="${v}">`).join('')}</datalist>
       </label>
-      <label>Vintage<input name="vintage" type="number" min="1900" max="2100" value="${ext.vintage ?? ''}" /></label>
+      <label>Vintage<input name="vintage" type="number" min="1900" max="2100" value="${escapeAttr(ext.vintage ?? '')}" /></label>
       <div class="row">
         <label style="flex:1">Region<input name="region" value="${escapeAttr(ext.region || '')}" /></label>
         <label style="flex:1">Country<input name="country" value="${escapeAttr(ext.country || '')}" /></label>
@@ -2629,7 +2796,7 @@ function renderAddReviewHTML(ext, details, imagePaths, narrative) {
             ${SWEETNESS_OPTS.map((s) => `<option ${ext.sweetness === s ? 'selected' : ''}>${s}</option>`).join('')}
           </select>
         </label>
-        <label style="flex:1">Body 1-5<input name="body" type="number" min="1" max="5" value="${ext.body ?? ''}" /></label>
+        <label style="flex:1">Body 1-5<input name="body" type="number" min="1" max="5" value="${escapeAttr(ext.body ?? '')}" /></label>
       </div>
       <div class="row">
         <label style="flex:1">Quantity<input name="quantity" type="number" min="0" value="1" /></label>
@@ -2666,10 +2833,21 @@ function wireAddReviewForm(rootEl, imagePaths, details, onSaved = null) {
 
       if (dupe) {
         const desc = `${dupe.producer}${dupe.wine_name ? ' · ' + dupe.wine_name : ''}${dupe.vintage ? ' ' + dupe.vintage : ''}`;
-        const merge = confirm(
-          `You already have ${dupe.quantity}× of "${desc}".\n\nOK = add to existing (${dupe.quantity + 1} total).\nCancel = save as a separate bottle.`
-        );
-        if (merge) {
+        // Was a native confirm() where OK meant "merge" and Cancel meant "save
+        // separately" — but Cancel universally means "do nothing", so the one
+        // button people press to back out silently created a duplicate row.
+        // Three labelled choices, including an actual way out.
+        const choice = await askChoice({
+          title: 'You already have this wine',
+          body: `${desc} — ${dupe.quantity} in your cellar.`,
+          options: [
+            { value: 'merge',    label: `Add to existing (${dupe.quantity + 1} total)`, primary: true },
+            { value: 'separate', label: 'Save as a separate bottle' },
+            { value: 'cancel',   label: 'Cancel', ghost: true },
+          ],
+        });
+        if (choice === 'cancel' || choice == null) return;
+        if (choice === 'merge') {
           // Increment, and opportunistically fill in missing photos / details.
           const patch = { quantity: dupe.quantity + 1 };
           if (!dupe.label_image_path && input.label_image_path) patch.label_image_path = input.label_image_path;
@@ -2686,7 +2864,7 @@ function wireAddReviewForm(rootEl, imagePaths, details, onSaved = null) {
       const created = await createBottle(input);
       onSaved?.();
       location.hash = `#/bottle/${created.id}`;
-    } catch (err) { alert(err.message); }
+    } catch (err) { showToast(friendlyError(err)); }
   });
 }
 
@@ -2703,7 +2881,7 @@ async function renderPourResultHTML(response) {
             <h3>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h3>
             <p class="muted">${escapeHtml(b.varietal)}${b.vintage ? ` · ${b.vintage}` : ''} · ×${b.quantity}</p>
             <div class="actions">
-              <button data-action="confirm-pour" data-bottle-id="${b.id}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour this</button>
+              <button data-action="confirm-pour" data-bottle-id="${escapeAttr(b.id)}" ${b.quantity <= 0 ? 'disabled' : ''}>Pour this</button>
               <a href="#/cellar" class="btn ghost" style="display:inline-block; padding:0.4rem 0.8rem; border:1px solid var(--surface-2); border-radius:var(--radius);">Cancel</a>
             </div>
           </div>
@@ -2713,9 +2891,9 @@ async function renderPourResultHTML(response) {
     }
   }
   if (Array.isArray(response.match_candidates) && response.match_candidates.length) {
-    const cards = await Promise.all(response.match_candidates.map(async (c) => {
-      let b = null;
-      try { b = await getBottle(c.bottle_id); } catch {}
+    const candidateById = await getBottlesByIds(response.match_candidates.map((c) => c.bottle_id));
+    const cards = response.match_candidates.map((c) => {
+      const b = candidateById.get(c.bottle_id) || null;
       const head = b
         ? `<h3>${escapeHtml(b.producer)}${b.wine_name ? ` · ${escapeHtml(b.wine_name)}` : ''}${b.vintage ? ` · ${b.vintage}` : ''}</h3>`
         : `<h3 class="muted">Unknown bottle (${escapeHtml(c.bottle_id)})</h3>`;
@@ -2723,10 +2901,10 @@ async function renderPourResultHTML(response) {
         <div class="bottle-meta">
           ${head}
           <p class="muted">Confidence: ${escapeHtml(c.confidence || '?')}. ${escapeHtml(c.reasoning || '')}</p>
-          <button data-action="confirm-pour" data-bottle-id="${c.bottle_id}">Pour this</button>
+          <button data-action="confirm-pour" data-bottle-id="${escapeAttr(c.bottle_id)}">Pour this</button>
         </div>
       </article>`;
-    }));
+    });
     return `<h2>Possible matches</h2><div class="grid">${cards.join('')}</div>`;
   }
   return `<h2>No match in your cellar</h2>
@@ -2819,7 +2997,7 @@ function wireBottleDetail(root, bottle) {
         await pourBottle(bottle.id);
         showToast('Poured. Undo?', { actionLabel: 'Undo', onAction: () => undoPour(bottle.id).then(() => render()) });
         render();
-      } catch (err) { alert(err.message); }
+      } catch (err) { showToast(friendlyError(err)); }
       return;
     }
     if (action === 'edit') {
@@ -2829,7 +3007,7 @@ function wireBottleDetail(root, bottle) {
     if (action === 'delete') {
       if (!confirm('Delete this bottle?')) return;
       try { await deleteBottle(bottle.id); location.hash = '#/cellar'; }
-      catch (err) { alert(err.message); }
+      catch (err) { showToast(friendlyError(err)); }
       return;
     }
     if (action === 'retry-enrich') {
@@ -2847,10 +3025,10 @@ function wireBottleDetail(root, bottle) {
           await saveEnrichment(bottle.id, details);
           render();
         } else {
-          alert('No details returned.');
+          showToast('The sommelier returned no details — try again.');
           btn.disabled = false; btn.textContent = wasLabel;
         }
-      } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = wasLabel; }
+      } catch (err) { showToast(friendlyError(err)); btn.disabled = false; btn.textContent = wasLabel; }
     }
   });
 }
@@ -2905,21 +3083,60 @@ function wireAuth() {
       $('#auth-error').textContent = err.message;
     }
   });
-  $('#signup-btn').addEventListener('click', async () => {
-    const email = $('#signin-form').email.value;
-    const pw    = $('#signin-form').password.value;
-    if (!email || !pw) { $('#auth-error').textContent = 'Email + password required.'; return; }
-    $('#auth-error').textContent = '';
-    try {
-      await signUp(email, pw);
-    } catch (err) {
-      if (/already registered|already exists|user_already_exists/i.test(err.message)) {
-        try { await signIn(email, pw); await render(); }
-        catch (signInErr) { $('#auth-error').textContent = signInErr.message; }
-      } else {
-        $('#auth-error').textContent = err.message;
-      }
+}
+
+// ── Choice dialog ─────────────────────────────────────────────────
+//
+// A confirm() replacement for decisions that aren't yes/no. Native confirm
+// only offers OK and Cancel, so any third option has to be smuggled into one
+// of them — which is how "Cancel = save as a separate bottle" happened.
+//
+// Resolves with the chosen option's value, or null if dismissed (Escape or
+// backdrop). Callers must treat null as "do nothing".
+function askChoice({ title, body, options }) {
+  return new Promise((resolve) => {
+    const prevFocus = document.activeElement;
+    const overlay = document.createElement('div');
+    overlay.className = 'choice-overlay';
+    overlay.innerHTML = `
+      <div class="choice-card" role="dialog" aria-modal="true" aria-labelledby="choice-title">
+        <h2 id="choice-title">${escapeHtml(title)}</h2>
+        ${body ? `<p class="muted">${escapeHtml(body)}</p>` : ''}
+        <div class="choice-actions">
+          ${options.map((o, i) => `<button type="button" data-choice-idx="${i}"${o.ghost ? ' class="ghost"' : ''}>${escapeHtml(o.label)}</button>`).join('')}
+        </div>
+      </div>`;
+
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener('keydown', onKey, true);
+      overlay.remove();
+      prevFocus?.focus?.();
+      resolve(value);
+    };
+
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); finish(null); return; }
+      if (e.key !== 'Tab') return;
+      const btns = $$('button', overlay);
+      if (!btns.length) return;
+      const first = btns[0], last = btns[btns.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     }
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) { finish(null); return; }   // backdrop
+      const btn = e.target.closest('[data-choice-idx]');
+      if (btn) finish(options[Number(btn.dataset.choiceIdx)]?.value ?? null);
+    });
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(overlay);
+    // Focus the primary option if one is marked, else the first.
+    const primaryIdx = Math.max(0, options.findIndex((o) => o.primary));
+    $$('button', overlay)[primaryIdx]?.focus();
   });
 }
 
@@ -2927,7 +3144,7 @@ function wireAuth() {
 function openLightbox(src) {
   const overlay = document.createElement('div');
   overlay.className = 'lightbox';
-  overlay.innerHTML = `<img src="${src}" alt="" />`;
+  overlay.innerHTML = `<img src="${escapeAttr(src)}" alt="" />`;
   const close = () => overlay.remove();
   overlay.addEventListener('click', close);
   document.addEventListener('keydown', function onKey(e) {
@@ -2940,11 +3157,13 @@ function openLightbox(src) {
 let toastTimer = null;
 function showToast(msg, { actionLabel, onAction } = {}) {
   const t = $('#toast');
-  t.innerHTML = `<span>${escapeHtml(msg)}</span>${actionLabel ? `<button id="toast-action">${actionLabel}</button>` : ''}`;
+  t.innerHTML = `<span>${escapeHtml(msg)}</span>${actionLabel ? `<button id="toast-action">${escapeHtml(actionLabel)}</button>` : ''}`;
   t.hidden = false;
   if (actionLabel) $('#toast-action').addEventListener('click', () => { onAction?.(); t.hidden = true; });
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
+  // A toast carrying an action is a decision, not a notification — five
+  // seconds isn't long enough to notice an accidental pour and undo it.
+  toastTimer = setTimeout(() => { t.hidden = true; }, actionLabel ? 12000 : 5000);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
