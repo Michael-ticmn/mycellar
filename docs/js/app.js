@@ -867,16 +867,13 @@ function renderTonightPane(root, plan, token) {
       const w      = walkById.get(pick.bottle_id);
       const num    = i + 1;
       const sub    = bottle ? [bottle.varietal, bottle.vintage, bottle.region, bottle.country].filter(Boolean).map(escapeHtml).join(' · ') : '';
-      // The wine name opens the same detail modal the Cellar tab uses. A real
-      // <button> rather than a click handler on the <h3> so it's keyboard
-      // reachable and announced as interactive. Falls back to plain text when
-      // the bottle didn't resolve — nothing to open in that case.
-      const nameHTML = bottle
-        ? `${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}`
+      const title  = bottle ? `${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}` : `<span class="muted">Unknown bottle</span>`;
+      // Explicit affordance rather than a clickable heading — guests don't
+      // guess that a wine name is tappable, so the detail view went unfound.
+      // Carries data-bottle-id, so wireGuestBottleClicks picks it up unchanged.
+      const detailsBtn = bottle
+        ? `<button type="button" class="pour-details-btn" data-bottle-id="${escapeAttr(bottle.id)}" aria-label="Bottle details for ${escapeAttr(bottle.producer || 'this bottle')}">Bottle details</button>`
         : '';
-      const title = bottle
-        ? `<button type="button" class="pour-title-btn" data-bottle-id="${escapeAttr(bottle.id)}" aria-label="Details for ${escapeAttr(bottle.producer || 'this bottle')}">${nameHTML}</button>`
-        : `<span class="muted">Unknown bottle</span>`;
       const lookFor = w?.what_to_look_for
         ? `<p class="pour-look">${escapeHtml(w.what_to_look_for)}</p>`
         : (pick.reasoning ? `<p class="pour-look muted">${escapeHtml(pick.reasoning)}</p>` : '');
@@ -891,6 +888,7 @@ function renderTonightPane(root, plan, token) {
         <div class="pour-num">Pour ${num}</div>
         <h3>${title}</h3>
         ${sub ? `<p class="muted">${sub}</p>` : ''}
+        ${detailsBtn}
         ${lookFor}
         ${cue}
         ${transition}
@@ -922,6 +920,9 @@ function pourNoteWidgetHTML() {
     <button type="button" class="ghost" data-pour-note-toggle>Send a note to the host</button>
     <form class="pour-note-form" data-pour-note-form hidden>
       <textarea name="note" rows="2" placeholder="What did you notice? What would you tell the host?" required></textarea>
+      <label>Your name (so the host knows who sent this)
+        <input type="text" name="guest_name" placeholder="e.g. Mike" />
+      </label>
       <div class="row">
         <button type="submit">Send</button>
         <button type="button" class="ghost" data-pour-note-cancel>Cancel</button>
@@ -944,6 +945,13 @@ function wirePourNoteWidgets(root, token, plannedFlightId) {
     const showErr = (msg) => { if (!errEl) return; errEl.hidden = !msg; errEl.textContent = msg || ''; };
     const showOk  = (msg) => { if (!statusEl) return; statusEl.hidden = !msg; statusEl.textContent = msg || ''; };
 
+    // Prefill from the name the guest already gave on a previous send (either
+    // path writes it). Before this the pour-note form had no name field at
+    // all, so a guest who only ever sent pour notes stayed anonymous with no
+    // way to identify themselves.
+    const nameInput = form.querySelector('input[name="guest_name"]');
+    if (nameInput) nameInput.value = getGuestName();
+
     toggle.addEventListener('click', () => {
       form.hidden = false;
       toggle.hidden = true;
@@ -962,12 +970,16 @@ function wirePourNoteWidgets(root, token, plannedFlightId) {
       const submitBtn = form.querySelector('button[type="submit"]');
       if (submitBtn) submitBtn.disabled = true;
       showErr(''); showOk('');
+      const guestName = (nameInput?.value || '').trim();
       try {
         await sendGuestMessage(token, {
           kind: 'pour_note',
           payload: { planned_flight_id: plannedFlightId, bottle_id: bottleId, note },
-          guestName: getGuestName(),
+          guestName,
         });
+        // Remember it so the next pour's form (and the AI-result send button)
+        // is prefilled — same key both paths already read.
+        if (guestName) setGuestName(guestName);
         if (ta) ta.value = '';
         showOk('Sent ✓');
       } catch (err) {

@@ -1080,22 +1080,24 @@ body.guest-mode .topbar .userbox { display: none; }
   color: var(--muted);
 }
 .pour-block h3 { font-size: 1.15rem; margin: 0; }
-/* The pour title is a real <button> for keyboard/AT reachability, so strip the
-   native chrome and let it inherit the h3's type. Underline on hover/focus is
-   the only affordance — the heading should still read as a heading. */
-.pour-title-btn {
-  background: none;
-  border: 0;
-  padding: 0;
-  margin: 0;
-  font: inherit;
-  color: inherit;
-  text-align: left;
+/* Explicit "Bottle details" affordance in a pour block. Deliberately a visible
+   chip rather than a tappable heading — a clickable wine name reads as text and
+   guests never found it. Sized small so it supports the pour copy without
+   competing with the note button below it. */
+.pour-details-btn {
+  justify-self: start;
+  margin: 0.1rem 0 0;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--surface-2);
+  border-radius: 999px;
   cursor: pointer;
 }
-.pour-title-btn:hover,
-.pour-title-btn:focus-visible { text-decoration: underline; }
-.pour-title-btn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; }
+.pour-details-btn:hover { color: var(--text); border-color: var(--accent-2); }
+.pour-details-btn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .pour-block .muted { margin: 0; }
 .pour-look { margin: 0.25rem 0 0; }
 .food-cue-chip {
