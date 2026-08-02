@@ -788,6 +788,18 @@ body.guest-mode .topbar .userbox { display: none; }
 .guest-modal-close { position: absolute; top: 0.5rem; right: 0.5rem; background: transparent; border: 0; color: var(--muted); font-size: 1.1rem; cursor: pointer; padding: 0.4rem 0.6rem; }
 .bottle-row, .bottle-card { cursor: pointer; }
 
+/* Label photo in the guest bottle modal. Height-capped so a portrait shot
+   can't push the wine name and details below the fold on a phone. */
+.guest-bottle-photo { margin: 0 0 0.9rem; }
+.guest-bottle-photo img {
+  display: block;
+  width: 100%;
+  max-height: 45vh;
+  object-fit: contain;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
 /* ──────────── Planned flights ──────────── */
 .save-flight { margin-top: 1.5rem; }
 .save-flight-toggle {
@@ -1068,6 +1080,22 @@ body.guest-mode .topbar .userbox { display: none; }
   color: var(--muted);
 }
 .pour-block h3 { font-size: 1.15rem; margin: 0; }
+/* The pour title is a real <button> for keyboard/AT reachability, so strip the
+   native chrome and let it inherit the h3's type. Underline on hover/focus is
+   the only affordance — the heading should still read as a heading. */
+.pour-title-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pour-title-btn:hover,
+.pour-title-btn:focus-visible { text-decoration: underline; }
+.pour-title-btn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; }
 .pour-block .muted { margin: 0; }
 .pour-look { margin: 0.25rem 0 0; }
 .food-cue-chip {

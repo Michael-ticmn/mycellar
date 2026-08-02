@@ -17,7 +17,7 @@ import {
   resolveShare, listBottlesForShare,
   requestPairingForShare, requestFlightForShare,
   requestFlightExtrasForShare, requestDrinkNowForShare,
-  getSharedPlannedFlight, sendGuestMessage,
+  getSharedPlannedFlight, sendGuestMessage, guestLabelUrl,
 } from './guest.js';
 import { getActiveShareLink, createShareLink, revokeShareLink, shareUrlFor, listGuestMessages, countGuestMessagesSince, listAllOwnerShareLinks, listAllOwnerGuestMessages, deleteGuestMessage } from './share.js';
 
@@ -667,7 +667,7 @@ async function mountGuest(token) {
     }
     if (!view.length) { grid.innerHTML = '<p class="muted">No bottles match.</p>'; return; }
     grid.innerHTML = view.map(guestBottleRowHTML).join('');
-    wireGuestBottleClicks(grid, bottleById);
+    wireGuestBottleClicks(grid, bottleById, token);
   };
 
   $('#guest-search')?.addEventListener('input', (e) => { searchTerm = e.target.value.trim(); repaint(); });
@@ -713,7 +713,7 @@ async function renderGuestRecommendations(resultEl, response, bottleById, opts =
       <div class="grid">${cards.join('') || '<p class="muted">(no recommendations)</p>'}</div>
     </section>
     ${sendBlock}`;
-  wireGuestBottleClicks(resultEl, bottleById);
+  wireGuestBottleClicks(resultEl, bottleById, opts.token);
   if (opts.token && opts.requestType) {
     wireSendToHost(resultEl, opts.token, {
       kind: 'ai_result',
@@ -805,11 +805,11 @@ function wireSendToHost(root, token, message) {
   });
 }
 
-function wireGuestBottleClicks(root, bottleById) {
+function wireGuestBottleClicks(root, bottleById, token) {
   $$('[data-bottle-id]', root).forEach((node) => {
     node.addEventListener('click', () => {
       const b = bottleById.get(node.dataset.bottleId);
-      if (b) showGuestBottleDetail(b);
+      if (b) showGuestBottleDetail(b, token);
     });
   });
 }
@@ -867,7 +867,16 @@ function renderTonightPane(root, plan, token) {
       const w      = walkById.get(pick.bottle_id);
       const num    = i + 1;
       const sub    = bottle ? [bottle.varietal, bottle.vintage, bottle.region, bottle.country].filter(Boolean).map(escapeHtml).join(' · ') : '';
-      const title  = bottle ? `${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}` : `<span class="muted">Unknown bottle</span>`;
+      // The wine name opens the same detail modal the Cellar tab uses. A real
+      // <button> rather than a click handler on the <h3> so it's keyboard
+      // reachable and announced as interactive. Falls back to plain text when
+      // the bottle didn't resolve — nothing to open in that case.
+      const nameHTML = bottle
+        ? `${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}`
+        : '';
+      const title = bottle
+        ? `<button type="button" class="pour-title-btn" data-bottle-id="${escapeAttr(bottle.id)}" aria-label="Details for ${escapeAttr(bottle.producer || 'this bottle')}">${nameHTML}</button>`
+        : `<span class="muted">Unknown bottle</span>`;
       const lookFor = w?.what_to_look_for
         ? `<p class="pour-look">${escapeHtml(w.what_to_look_for)}</p>`
         : (pick.reasoning ? `<p class="pour-look muted">${escapeHtml(pick.reasoning)}</p>` : '');
@@ -898,6 +907,10 @@ function renderTonightPane(root, plan, token) {
   </div>`;
 
   if (token) wirePourNoteWidgets(root, token, plan.id);
+  // Pour titles carry data-bottle-id, so the same handler the Cellar tab uses
+  // opens the same modal. bottleById is built from plan.bottles above, which
+  // the plan RPC returns including `details` — so guests get full parity here.
+  wireGuestBottleClicks(root, bottleById, token);
 }
 
 // Per-pour "Send a note to the host" affordance. Multiple notes per
@@ -966,7 +979,7 @@ function wirePourNoteWidgets(root, token, plannedFlightId) {
   });
 }
 
-function showGuestBottleDetail(b) {
+function showGuestBottleDetail(b, token) {
   const modal = $('#guest-bottle-modal');
   if (!modal) return;
   const sub = [b.varietal, b.vintage, b.region, b.country].filter(Boolean).map(escapeHtml).join(' · ');
@@ -982,18 +995,42 @@ function showGuestBottleDetail(b) {
         <div class="narrative">${renderDetailsHTML(b.details)}</div>
       </section>`
     : '';
+  // The Tonight plan RPC (cellar27_share_get_planned_flight) doesn't project
+  // `quantity` — only the cellar-list RPC does. Render the row conditionally
+  // so opening this modal from a pour doesn't print "×undefined".
+  const quantityRow = Number.isFinite(b.quantity)
+    ? `<dt>Quantity</dt><dd>×${b.quantity}</dd>`
+    : '';
   $('#guest-bottle-detail').innerHTML = `
+    <div class="guest-bottle-photo" data-photo-slot hidden></div>
     <h2>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h2>
     <p class="muted">${sub}</p>
     <dl class="bottle-meta-grid">
       <dt>Style</dt><dd>${escapeHtml(b.style || '—')}</dd>
       ${b.sweetness ? `<dt>Sweetness</dt><dd>${escapeHtml(b.sweetness)}</dd>` : ''}
       ${b.body ? `<dt>Body</dt><dd>${b.body} / 5</dd>` : ''}
-      <dt>Quantity</dt><dd>×${b.quantity}</dd>
+      ${quantityRow}
       <dt>Drink window</dt><dd>${window}</dd>
     </dl>
     ${detailsBlock}`;
   modal.hidden = false;
+
+  // Label photo, fetched on demand. The signed URL is minted by the
+  // guest-label Edge Function and lives ~10 min, so it's requested per open
+  // rather than cached. Bottles with no photo (and a not-yet-deployed
+  // function) resolve to null and simply leave the slot hidden — the modal is
+  // fully usable without it, so nothing here blocks rendering.
+  const slot = $('#guest-bottle-detail [data-photo-slot]');
+  if (slot && token && b.id) {
+    guestLabelUrl(token, b.id).then((url) => {
+      if (!url) return;
+      // Guard against a slow response landing after the guest has closed the
+      // modal or clicked through to a different bottle.
+      if (modal.hidden || !slot.isConnected) return;
+      slot.innerHTML = `<img src="${escapeAttr(url)}" alt="Label of ${escapeAttr(b.producer || 'this bottle')}" loading="lazy">`;
+      slot.hidden = false;
+    });
+  }
 }
 
 function guestBottleRowHTML(b) {

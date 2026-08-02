@@ -16,6 +16,33 @@ export async function listBottlesForShare(token) {
   return data || [];
 }
 
+// Short-lived signed URL for a bottle's label photo, for guests.
+//
+// Can't go through the Storage client directly: `bottle-labels` is private and
+// its policies are `to authenticated` scoped to the owner's own folder, so an
+// anon guest can neither read the object nor sign it. The `guest-label` Edge
+// Function does the lookup with the service key after validating the share
+// link, so the storage path never reaches the browser.
+//
+// Returns null for "no photo" / invalid link / any failure — the caller treats
+// a missing photo as a normal, non-fatal state.
+export async function guestLabelUrl(token, bottleId) {
+  if (!token || !bottleId) return null;
+  const cfg = window.CELLAR_CONFIG;
+  const endpoint = `${cfg.SUPABASE_URL}/functions/v1/guest-label`
+    + `?token=${encodeURIComponent(token)}&bottle_id=${encodeURIComponent(bottleId)}`;
+  try {
+    const res = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${cfg.SUPABASE_ANON_KEY}` },
+    });
+    if (!res.ok) return null;           // 404 no_photo, 403 link_invalid, etc.
+    const body = await res.json();
+    return body?.url || null;
+  } catch {
+    return null;                        // offline / function not deployed yet
+  }
+}
+
 // Returns the planned flight currently attached to this token's share
 // link, with sanitized bottle metadata for each pick — or null if the
 // owner hasn't attached a plan yet. RPC is SECURITY DEFINER (anon-safe).
