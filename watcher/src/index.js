@@ -282,11 +282,20 @@ async function hydratePlanContext(row) {
   return { ...row, context };
 }
 
-async function pickUp(table, row) {
-  // Policy gate: allowlist + per-user rate limit. Reject pre-claim so
-  // the request shows status=error to the client immediately, without
-  // spawning claude.
-  const denied = denyReason(row.user_id);
+// isRetry marks a row the stale-claim sweep sent back to 'pending'. It's the
+// same user request being processed again, so it must not consume a second
+// rate-limit slot. (It does still consume a daily-ceiling slot, and should:
+// that counter measures actual claude spawns, and a retry is a real one.)
+async function pickUp(table, row, { isRetry = false } = {}) {
+  // Policy gate: allowlist + rate limit. Reject pre-claim so the request shows
+  // status=error to the client immediately, without spawning claude.
+  const denied = denyReason(row.user_id, {
+    // Guest-originated rows carry share_link_id and are already bounded by the
+    // link's ai_quota and the per-link pacing guard; keep the watcher backstop
+    // per-link too rather than billing it to the host.
+    subject: row.share_link_id ? `share:${row.share_link_id}` : row.user_id,
+    record: !isRetry,
+  });
   if (denied) {
     log(`policy deny ${table}.${row.id}: ${denied}`);
     await sb.from(table).update({
@@ -562,7 +571,7 @@ async function sweepStaleClaims() {
     const { data: full, error: fetchErr } = await sb
       .from(row.table_name).select('*').eq('id', row.request_id).single();
     if (fetchErr || !full) { err(`refetch retry row:`, fetchErr); continue; }
-    try { await pickUp(row.table_name, full); }
+    try { await pickUp(row.table_name, full, { isRetry: true }); }
     catch (e) { err(`retry pickUp ${row.request_id}:`, e); }
   }
 }

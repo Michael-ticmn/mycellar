@@ -71,7 +71,11 @@ $$;
 
 ## Layer 3b — Per-user rate limit (watcher in-memory)
 
-**Where:** [`watcher/src/policy.js`](../watcher/src/policy.js) — sliding-window `Map` keyed by `user_id`. Redundant with the DB rate limit; this is the defense-in-depth backstop for cases where the DB layer is bypassed (e.g., service_role inserting on behalf of a user).
+**Where:** [`watcher/src/policy.js`](../watcher/src/policy.js) — sliding-window `Map`. Redundant with the DB rate limit; this is the defense-in-depth backstop for cases where the DB layer is bypassed (e.g., service_role inserting on behalf of a user).
+
+**What it's keyed on:** `user_id` for owner requests, `share:<link_id>` for guest ones. Guest requests are inserted with `user_id` = the owner (that's how the SECURITY DEFINER RPC works), so keying purely on `user_id` meant a guest with a 50-quota link could spend half the host's own hourly budget. Migration 0009 states guests are intentionally on a separate budget; keying per-link is what makes that true at this layer too. The allowlist check still runs against the real `user_id` — the owner is the one who has to be authorized.
+
+**Retries don't double-charge:** a row the stale-claim sweep returns to `pending` is re-processed with `record: false`, so two timeouts on one request consume one slot rather than three. The daily ceiling still charges each retry, and should — that counter measures actual `claude` spawns.
 
 **Effect:** Watcher refuses to spawn Claude for the user past the limit; marks the request `status='error'` with `error_message='policy: rate limit: N/M requests in last hour'`.
 
