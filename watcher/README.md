@@ -115,6 +115,9 @@ watcher/
 - **Insert from phone fails with "row violates row-level security policy"** → user_id isn't in `cellar27_allowed_users`, or `cellar27_check_rate_limit` returned false (default 100 requests/hour as of v0.8). Seed the allowlist via service_role.
 - **Request errors with "Daily AI capacity reached"** → `MAX_CLAUDE_CALLS_PER_DAY` ceiling hit (default 250). See `cellar27_watcher_metrics` for today's count; bump the env var and restart if needed.
 - **Request errors with "policy: rate limit: N/100 requests in last hour"** → watcher-side in-memory rate limit (cleared on restart, tunable via `WATCHER_RATE_LIMIT_PER_HOUR`).
+- **`<channel> dropped; reconnect attempt N in 60s` repeating** → genuine loss of connectivity to Supabase, not a bug. Expect roughly one line per channel per minute once backoff reaches its 60s cap; `attempts` resets to 0 on a successful re-subscribe, and a `reconnected after N attempt(s); sweeping stale pending` line follows. If you instead see *several* interleaved attempt counters for the same channel, or `CLOSED` alternating rapidly with `SUBSCRIBED`, that's the pre-v0.13.3 self-teardown loop — update the watcher.
+- **`network unreachable (...) — suppressing repeats until it recovers`** → the sweep hit a DNS/connect failure. Only the first is logged; a `network recovered after N failed attempt(s)` line reports the outage length once it clears. Non-network errors are never suppressed, so anything else in `watcher.err.log` is real.
+- **Insert fails with `violates check constraint "pairing_requests_context_size"`** → something is shipping more than 4 KB inline in `context`. Don't raise the cap; fetch the data watcher-side from its row instead, as `flight_plan` / `flight_guest` do via `hydratePlanContext()`. See "Planned-flight requests" in [`ARCHITECTURE.md`](../ARCHITECTURE.md).
 
 ## Email notifications
 

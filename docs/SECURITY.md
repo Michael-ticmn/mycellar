@@ -117,6 +117,8 @@ update cellar27_watcher_metrics set spawn_count = 0 where metric_date = current_
 
 A 5 MB blob can't make it into the request row.
 
+**Don't raise the `context` cap to make a feature fit.** If a request type needs more than 4 KB of context, have the watcher fetch it server-side with the service key instead of shipping it inline — `scan_requests` does this for the `enrich` intent (`context.bottle_id` → `bottles` row) and `pairing_requests` does it for `flight_plan` / `flight_guest` (`context.planned_flight_id` → `planned_flights` row). The cap exists to bound *user-supplied* payloads; app-generated data belongs behind a row lookup, not in the request.
+
 ## Layer 6 — Stale-claim sweep
 
 `cellar27_sweep_stale_claims(p_timeout_minutes=10, p_max_retries=2)` runs every 2 min from the watcher (and once on startup). Rows stuck in `status='picked_up'` past the timeout get reset to `pending` for up to 2 retries; on the 3rd they're marked `error` so the phone stops spinning.

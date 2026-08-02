@@ -57,7 +57,7 @@
 
 | # | Where     | What                                                                     |
 |---|-----------|--------------------------------------------------------------------------|
-| ① | Phone     | Frontend (`docs/js/pairings.js`) inserts a `pairing_request` row, with a `cellar_snapshot` and `context`. Anon key + RLS confines it to your `user_id`. |
+| ① | Phone     | Frontend (`docs/js/pairings.js`) inserts a `pairing_request` row, with a `cellar_snapshot` and `context`. Anon key + RLS confines it to your `user_id`. The two planned-flight types are the exception — see "Planned-flight requests" below. |
 | ② | Supabase  | Realtime publication fires an `INSERT` event for the new row.            |
 | ③ | Laptop    | `watcher` (Node, `watcher/src/index.js`) is subscribed to that event. It runs the policy gate (allowlist + rate limit), atomically claims the row (`status: pending → picked_up`), renders the request to a markdown file in `requests/`, then `spawn`s `claude --print` with a one-shot prompt pointing at that file. Claude reads it, reasons, writes a response markdown file at the path the request specified (in `responses/`). |
 | ④ | Laptop    | `chokidar` notices the new file. Watcher parses it, inserts a `pairing_response` row, marks the request `completed`, archives both files into `processed/`. |
@@ -91,6 +91,14 @@ The laptop only needs to be awake during step ③ (the AI reasoning window — t
 - **Size CHECK constraints** on user-supplied jsonb (`context` ≤ 4 KB, `cellar_snapshot` ≤ 65 KB, `image_paths` ≤ 4 KB) so a runaway phone payload can't bloat a row.
 
 See [`docs/SECURITY.md`](docs/SECURITY.md) for the full limits table, where each is enforced, and how to tune.
+
+## Planned-flight requests
+
+`flight_plan` and `flight_guest` are backed by a saved `planned_flights` row, so they don't follow the inline-context shape in step ①. The client sends only `{ planned_flight_id }` (~60 bytes) and the watcher loads the row itself with the service key — the same pattern `scan_requests` uses for the `enrich` intent, where `context.bottle_id` is resolved to a `bottles` row watcher-side.
+
+This is deliberate, not an optimization. Sending the flight inline (picks + sommelier narrative + kept food list) exceeded the 4 KB `context` cap once a flight had a handful of food items, and the insert was rejected outright by `pairing_requests_context_size`. Fetching server-side makes context size independent of flight size, so the cap keeps guarding the free-text `pairing` / `flight` / `drink_now` paths without needing to be raised.
+
+`hydratePlanContext()` in [`watcher/src/index.js`](watcher/src/index.js) merges the fetched row into `row.context` before rendering, so [`watcher/src/render.js`](watcher/src/render.js) reads every field off the context exactly as it does for the other request types. Inline values take precedence over fetched ones and a failed fetch falls back to what the client sent, which keeps the watcher compatible with an older cached app bundle.
 
 ## What about scan?
 
