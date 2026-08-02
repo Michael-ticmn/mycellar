@@ -1,4 +1,4 @@
-import { getSession, signIn, signUp, onAuthChange } from './auth.js';
+import { getSession, signIn, onAuthChange } from './auth.js';
 import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, updateBottle, saveEnrichment, findDuplicate } from './bottles.js';
 import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
 import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } from './pairings.js';
@@ -2902,22 +2902,6 @@ function wireAuth() {
       await render();
     } catch (err) {
       $('#auth-error').textContent = err.message;
-    }
-  });
-  $('#signup-btn').addEventListener('click', async () => {
-    const email = $('#signin-form').email.value;
-    const pw    = $('#signin-form').password.value;
-    if (!email || !pw) { $('#auth-error').textContent = 'Email + password required.'; return; }
-    $('#auth-error').textContent = '';
-    try {
-      await signUp(email, pw);
-    } catch (err) {
-      if (/already registered|already exists|user_already_exists/i.test(err.message)) {
-        try { await signIn(email, pw); await render(); }
-        catch (signInErr) { $('#auth-error').textContent = signInErr.message; }
-      } else {
-        $('#auth-error').textContent = err.message;
-      }
     }
   });
 }

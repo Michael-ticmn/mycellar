@@ -11,11 +11,10 @@ export async function signIn(email, password) {
   return data.session;
 }
 
-export async function signUp(email, password) {
-  const { data, error } = await sb.auth.signUp({ email, password });
-  if (error) throw error;
-  return data.session;
-}
+// No signUp() here on purpose: sign-ups are disabled in the Supabase project
+// (see ARCHITECTURE.md, "Security shape"). Accounts are created from the
+// dashboard and added to cellar27_allowed_users, so a client-side sign-up path
+// could only ever surface an error.
 
 export async function signOut() {
   const { error } = await sb.auth.signOut();

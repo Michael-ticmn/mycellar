@@ -153,9 +153,12 @@
         <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
         <div class="row">
           <button type="submit">Sign in</button>
-          <button type="button" id="signup-btn" class="ghost">Sign up</button>
         </div>
         <p id="auth-error" class="error"></p>
+        <!-- No Sign up button: sign-ups are disabled in Supabase, so it could
+             only ever produce an error. Accounts are created from the
+             dashboard and added to cellar27_allowed_users. -->
+        <p class="muted auth-note">Invite only — accounts are created by the cellar owner.</p>
       </form>
     </div>
   </section>

@@ -23,6 +23,8 @@ const SHELL = [
   './views/drink-now.html',
   './views/share.html',
   './views/guest.html',
+  './views/planned.html',
+  './views/bottle.html',
   './vendor/qrcode.min.js',
   './manifest.webmanifest',
   './icon.svg',
