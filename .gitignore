@@ -17,6 +17,11 @@ docs/config.local.js
 watcher/watcher.out.log*
 watcher/watcher.err.log*
 
+# Data snapshots. scripts/backup-data.mjs writes outside the repo by default,
+# but --out could point here, and these hold prices, notes and guest names.
+cellar27-backups/
+*-backup/
+
 # OS / editor
 .DS_Store
 Thumbs.db

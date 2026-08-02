@@ -25,6 +25,37 @@ matter, and both are already applied — renumbering them now would only break t
 match between the folder and what actually ran, which is the sole record of it
 (there's no ledger table). They stay as they are. Pick `0019` next.
 
+## Backups and rollback
+
+**Snapshot the data** before any schema change:
+
+```
+node scripts/backup-data.mjs
+```
+
+Writes every table as JSON plus the label photos to
+`~/cellar27-backups/<timestamp>/` — deliberately outside the repo, since it
+holds prices, notes and guest names and this repo is public. Reads
+`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` from `watcher/.env`. Add
+`--no-photos` to skip Storage and finish in a couple of seconds.
+
+It's a logical export, not a Postgres backup: your rows, not the schema,
+policies, functions or `auth.users`. It's what you want when a change ate data;
+it isn't a substitute for Supabase's own backups if the project itself is lost.
+
+**Rolling back has three independent parts.** Do only the ones you need:
+
+| Part | How | Notes |
+|---|---|---|
+| Frontend | `git checkout main` and push | GitHub Pages serves `main`. Users pick it up on the next service-worker cycle. |
+| Watcher | `git checkout main`, then restart it | It runs whatever is on disk, so the checked-out branch decides the behaviour on restart. |
+| Database | Run [`supabase/rollback/0016_0018_rollback.sql`](supabase/rollback/0016_0018_rollback.sql) | Git can't undo an applied migration — this is the only way back. |
+
+The rollback SQL restores the database to commit `33e9d96` (v0.13.9). It touches
+only functions and policies: **no table is dropped and no row is modified**, so
+it's safe to run without restoring data. It also isn't in `supabase/migrations/`
+on purpose, so it can never be mistaken for the next migration to apply.
+
 ## Architecture
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — one-page picture of how a request travels from phone → Supabase → laptop → Claude → back
