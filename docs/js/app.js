@@ -2,6 +2,7 @@ import { getSession, signIn, onAuthChange } from './auth.js';
 import { listBottles, createBottle, deleteBottle, pourBottle, undoPour, getBottle, getBottlesByIds, updateBottle, saveEnrichment, findDuplicate } from './bottles.js';
 import { VARIETAL_NAMES, suggestDrinkWindow } from './varietal-windows.js';
 import { requestPairing, requestFlight, requestFlightExtras, requestDrinkNow } from './pairings.js';
+import { onRequestCreated, watchClaim } from './pairing-bus.js';
 import {
   listPlannedFlights, getPlannedFlight, createPlannedFlight,
   updatePlannedFlight, deletePlannedFlight, requestFlightPlanEnrichment,
@@ -27,6 +28,25 @@ const STYLES = [
   'rose','sparkling','dessert','fortified',
 ];
 const SWEETNESS_OPTS = ['bone_dry','dry','off_dry','sweet'];
+
+// The values above are the database enum and must not change — the CHECK
+// constraint on bottles.style, STYLE_GROUPS, and the sommelier prompts all
+// depend on them. Only what the reader sees changes. Snake case in the Add
+// form and on the bottle detail page ("Style: full_red") was the schema
+// showing through the interface.
+const STYLE_LABELS = {
+  light_red: 'Light red', medium_red: 'Medium red', full_red: 'Full-bodied red',
+  light_white: 'Light white', full_white: 'Full-bodied white',
+  rose: 'Rosé', sparkling: 'Sparkling', dessert: 'Dessert', fortified: 'Fortified',
+};
+const SWEETNESS_LABELS = {
+  bone_dry: 'Bone dry', dry: 'Dry', off_dry: 'Off-dry', sweet: 'Sweet',
+};
+// Fall back to a de-snaked version rather than blanking out, so a value added
+// to the database before it's added here still reads sensibly.
+const humanize = (v) => String(v || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+const styleLabel = (v) => (v ? (STYLE_LABELS[v] || humanize(v)) : '—');
+const sweetnessLabel = (v) => (v ? (SWEETNESS_LABELS[v] || humanize(v)) : '—');
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -80,7 +100,12 @@ async function render(providedSession) {
   $('#user-email').textContent = session.user.email;
 
   $$('nav a').forEach((a) => {
-    a.classList.toggle('active', a.dataset.route === route);
+    const current = a.dataset.route === route;
+    a.classList.toggle('active', current);
+    // The class only changes a background colour, which says nothing to a
+    // screen reader. aria-current is the part that announces "you are here".
+    if (current) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
   });
 
   // Best-effort: refresh the Share nav badge so the unread-guest pip
@@ -747,8 +772,7 @@ async function mountGuest(token) {
   $('#guest-sort')?.addEventListener('change', (e) => { sortMode = e.target.value; repaint(); });
   $$('#guest-filters .chip').forEach((chip) => {
     chip.addEventListener('click', () => {
-      $$('#guest-filters .chip').forEach((c) => c.classList.remove('active'));
-      chip.classList.add('active');
+      setActiveChip('#guest-filters', chip);
       activeFilter = chip.dataset.styleFilter;
       repaint();
     });
@@ -1104,8 +1128,8 @@ function showGuestBottleDetail(b, token) {
     <h2>${escapeHtml(b.producer)}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}</h2>
     <p class="muted">${sub}</p>
     <dl class="bottle-meta-grid">
-      <dt>Style</dt><dd>${escapeHtml(b.style || '—')}</dd>
-      ${b.sweetness ? `<dt>Sweetness</dt><dd>${escapeHtml(b.sweetness)}</dd>` : ''}
+      <dt>Style</dt><dd>${escapeHtml(styleLabel(b.style))}</dd>
+      ${b.sweetness ? `<dt>Sweetness</dt><dd>${escapeHtml(sweetnessLabel(b.sweetness))}</dd>` : ''}
       ${b.body ? `<dt>Body</dt><dd>${b.body} / 5</dd>` : ''}
       ${quantityRow}
       <dt>Drink window</dt><dd>${window}</dd>
@@ -1185,7 +1209,9 @@ async function mountCellar() {
   // from the grid, its counts, filters, and search.
   bottles = bottles.filter((b) => (b.quantity ?? 0) > 0);
   if (!bottles.length) {
-    grid.innerHTML = '<p class="muted">Empty cellar. <a href="#/scan">Scan a bottle →</a> or <a href="#/add">add manually</a>.</p>';
+    // #/manage, not the #/scan legacy alias — this is the first screen a new
+    // cellar shows, and it was the only link left pointing at the old name.
+    grid.innerHTML = '<p class="muted">Empty cellar. <a href="#/manage">Scan a bottle →</a> or <a href="#/add">add manually</a>.</p>';
     return;
   }
 
@@ -1253,8 +1279,7 @@ async function mountCellar() {
   if (sort) sort.addEventListener('change', (e) => { sortMode = e.target.value; repaint(); });
   $$('#cellar-filters .chip').forEach((chip) => {
     chip.addEventListener('click', () => {
-      $$('#cellar-filters .chip').forEach((c) => c.classList.remove('active'));
-      chip.classList.add('active');
+      setActiveChip('#cellar-filters', chip);
       activeFilter = chip.dataset.styleFilter;
       repaint();
     });
@@ -1350,7 +1375,7 @@ async function mountAddBottle(bottleId) {
   const dl = $('#varietal-options');
   if (dl) dl.innerHTML = VARIETAL_NAMES.map((v) => `<option value="${v}">`).join('');
   const styleSel = form.style;
-  if (styleSel) styleSel.innerHTML = STYLES.map((s) => `<option value="${s}">${s}</option>`).join('');
+  if (styleSel) styleSel.innerHTML = STYLES.map((s) => `<option value="${s}">${escapeHtml(styleLabel(s))}</option>`).join('');
 
   // Edit mode: prefill from existing row + change page heading.
   let existing = null;
@@ -1521,15 +1546,36 @@ async function withBusySubmit(form, resultEl, msg, fn) {
 
   // These waits run up to five minutes against a laptop that has to be awake.
   // A loader that never changes is indistinguishable from a hung app, so count
-  // up, and past a minute say plainly what the hold-up might be.
+  // up — and say which of the two situations this actually is.
+  //
+  // The old copy guessed: past 60s it said "still working. This needs the
+  // cellar laptop awake", whether or not anything had picked the request up.
+  // watchClaim reads the row's status, so we can stop guessing: unclaimed after
+  // the grace period means the bridge isn't running, and that's worth saying
+  // immediately rather than after a minute of false reassurance.
   const started = Date.now();
+  let unclaimed = false;
+  let stopClaimWatch = null;
+
+  onRequestCreated((row) => {
+    stopClaimWatch?.();
+    stopClaimWatch = watchClaim('pairing_requests', row.id, {
+      onUnclaimed: () => { unclaimed = true; },
+      onClaimed:   () => { unclaimed = false; },   // came back mid-wait
+    });
+  });
+
   const timer = setInterval(() => {
     const el = resultEl.querySelector('.pour-loader-msg');
     if (!el) return;
     const secs = Math.round((Date.now() - started) / 1000);
     const elapsed = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
+    if (unclaimed) {
+      el.textContent = `Waiting for the cellar laptop · ${elapsed} — nothing has picked this up yet, so it's probably asleep or offline. This will run as soon as it's back.`;
+      return;
+    }
     el.textContent = secs > 60
-      ? `${msg} · ${elapsed} — still working. This needs the cellar laptop awake.`
+      ? `${msg} · ${elapsed} — still working.`
       : `${msg} · ${elapsed}`;
   }, 1000);
 
@@ -1539,6 +1585,8 @@ async function withBusySubmit(form, resultEl, msg, fn) {
     resultEl.innerHTML = `<p class="error">${escapeHtml(friendlyError(err))}</p>`;
   } finally {
     clearInterval(timer);
+    onRequestCreated(null);
+    stopClaimWatch?.();
     if (submitBtn) submitBtn.disabled = false;
   }
 }
@@ -1550,7 +1598,10 @@ async function withBusySubmit(form, resultEl, msg, fn) {
 function friendlyError(err) {
   const m = err?.message || String(err);
   if (/row-level security/i.test(m)) {
-    return "This account isn't allowed to make AI requests, or it has hit the hourly limit. See docs/SECURITY.md.";
+    // Was "… See docs/SECURITY.md." — which points a person holding a phone at
+    // a Markdown file in a GitHub repo. The first sentence is the actionable
+    // part; the second now says what to do rather than where to read.
+    return "This account isn't allowed to make AI requests, or it has hit the hourly limit. Wait an hour and try again, or check the cellar's allowlist.";
   }
   if (/Too many pending requests/i.test(m)) return 'Too many requests already in flight — wait for one to finish.';
   if (/Too many pending scans/i.test(m))    return 'Too many scans already in flight — review or dismiss one first.';
@@ -2559,7 +2610,20 @@ function mountManage() {
   const setStage = (stage) => {
     root.dataset.stage = stage;
     $$('.scan-stage-pane', root).forEach((p) => { p.hidden = p.dataset.pane !== stage; });
+    // Build the waiting loader through pourLoaderHTML rather than shipping a
+    // second hand-written copy in manage.html. That duplicate was the one
+    // reduced-motion support never reached — the media query is checked inside
+    // pourLoaderHTML, because SMIL can't be stopped from a stylesheet. Rendered
+    // on entry so a mid-session OS change is picked up on the next scan.
+    if (stage === 'waiting') {
+      const host = $('#scan-waiting-loader', root);
+      if (host) host.innerHTML = pourLoaderHTML('Identifying… (typically 20–40s with your sommelier)');
+    }
     renderTray();
+  };
+  const setWaitingMsg = (text) => {
+    const el = $('#scan-waiting-loader .pour-loader-msg', root);
+    if (el) el.textContent = text;
   };
   const cleanup = () => { if (stream) { stopCamera(stream); stream = null; } };
   const showError = (msg) => { setStage('error'); $('#scan-error', root).textContent = msg; };
@@ -2745,8 +2809,21 @@ function mountManage() {
         }));
         const req = await submitScanRequest({ intent, imagePaths, cellarSnapshot });
         setStage('waiting');
-        const response = await waitForScanResponse(req.id);
-        await renderPourResult(response);
+        // Same claim watch the sommelier requests use: if nothing picks the row
+        // up, say so instead of animating a glass for five minutes. Scan is the
+        // default way to add a bottle, so this is where a sleeping laptop is
+        // most likely to be met with a spinner.
+        const stopClaimWatch = watchClaim('scan_requests', req.id, {
+          onUnclaimed: () => setWaitingMsg(
+            "Nothing has picked this up yet — the cellar laptop is probably asleep or offline. This will run as soon as it's back."),
+          onClaimed: () => setWaitingMsg('Identifying… (typically 20–40s with your sommelier)'),
+        });
+        try {
+          const response = await waitForScanResponse(req.id);
+          await renderPourResult(response);
+        } finally {
+          stopClaimWatch();
+        }
       } else {
         // Add intent: enqueue and immediately bounce back to intent so
         // the user can scan another bottle while this one cooks.
@@ -2799,12 +2876,15 @@ function renderAddReviewHTML(ext, details, imagePaths, narrative) {
       </div>
       <div class="row">
         <label style="flex:1">Style
-          <select name="style" required>${STYLES.map((s) => `<option ${ext.style === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
+          <!-- Explicit value="" is load-bearing now that the label differs from
+               the stored enum. Without it the option text becomes the submitted
+               value and "Full-bodied red" would fail the CHECK constraint. -->
+          <select name="style" required>${STYLES.map((s) => `<option value="${escapeAttr(s)}" ${ext.style === s ? 'selected' : ''}>${escapeHtml(styleLabel(s))}</option>`).join('')}</select>
         </label>
         <label style="flex:1">Sweetness
           <select name="sweetness">
             <option value="">—</option>
-            ${SWEETNESS_OPTS.map((s) => `<option ${ext.sweetness === s ? 'selected' : ''}>${s}</option>`).join('')}
+            ${SWEETNESS_OPTS.map((s) => `<option value="${escapeAttr(s)}" ${ext.sweetness === s ? 'selected' : ''}>${escapeHtml(sweetnessLabel(s))}</option>`).join('')}
           </select>
         </label>
         <label style="flex:1">Body 1-5<input name="body" type="number" min="1" max="5" value="${escapeAttr(ext.body ?? '')}" /></label>
@@ -2972,8 +3052,8 @@ function renderBottleDetailHTML(b, frontUrl, backUrl) {
       </header>
       <dl class="bottle-stats">
         <dt>Quantity</dt><dd><span class="qty">×${b.quantity}</span></dd>
-        <dt>Style</dt><dd>${escapeHtml(b.style)}</dd>
-        ${b.sweetness ? `<dt>Sweetness</dt><dd>${escapeHtml(b.sweetness)}</dd>` : ''}
+        <dt>Style</dt><dd>${escapeHtml(styleLabel(b.style))}</dd>
+        ${b.sweetness ? `<dt>Sweetness</dt><dd>${escapeHtml(sweetnessLabel(b.sweetness))}</dd>` : ''}
         ${b.body ? `<dt>Body</dt><dd>${b.body}/5</dd>` : ''}
         <dt>Drink window</dt><dd>${w}${b.drink_window_overridden ? ' <span class="muted">(custom)</span>' : ''}</dd>
         ${b.storage_location ? `<dt>Storage</dt><dd>${escapeHtml(b.storage_location)}</dd>` : ''}
@@ -3148,6 +3228,18 @@ function askChoice({ title, body, options }) {
     // Focus the primary option if one is marked, else the first.
     const primaryIdx = Math.max(0, options.findIndex((o) => o.primary));
     $$('button', overlay)[primaryIdx]?.focus();
+  });
+}
+
+// Style filter chips, shared by the cellar and guest toolbars. They are toggle
+// buttons rather than tabs (both markups used to claim role="tablist" without
+// any of the behaviour), so the selected one carries aria-pressed. Keeping the
+// class and the attribute in one place is what stops them drifting apart again.
+function setActiveChip(containerSel, chosen) {
+  $$(`${containerSel} .chip`).forEach((c) => {
+    const on = c === chosen;
+    c.classList.toggle('active', on);
+    c.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
 }
 

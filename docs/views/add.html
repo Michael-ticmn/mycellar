@@ -20,12 +20,14 @@
         <select name="style" required></select>
       </label>
       <label style="flex:1">Sweetness
+        <!-- Labels are for the reader; the values are the database enum and
+             have to stay exactly as they are. -->
         <select name="sweetness">
           <option value="">—</option>
-          <option value="bone_dry">bone_dry</option>
-          <option value="dry">dry</option>
-          <option value="off_dry">off_dry</option>
-          <option value="sweet">sweet</option>
+          <option value="bone_dry">Bone dry</option>
+          <option value="dry">Dry</option>
+          <option value="off_dry">Off-dry</option>
+          <option value="sweet">Sweet</option>
         </select>
       </label>
       <label style="flex:1">Body (1–5)<input name="body" type="number" min="1" max="5" /></label>

@@ -73,6 +73,22 @@ npm run build:docs     # bundles + minifies into docs/js/dist/
 
 Bump [`docs/version.js`](docs/version.js) so the service worker invalidates the old cache. The committed bundle is what GitHub Pages serves — there is no CI build step.
 
+## Running it locally
+
+```
+npm run dev                  # http://127.0.0.1:8731, rebuilds the bundle on save
+npm run dev -- --host        # also reachable from a phone on the same wifi
+npm run dev -- --port 9000
+```
+
+Two things to know:
+
+**It uses the live database.** [`docs/config.public.js`](docs/config.public.js) points at the real Supabase project, so signing in locally is your actual account and pouring a bottle here pours it for real. To aim somewhere else, copy [`docs/config.local.example.js`](docs/config.local.example.js) to `docs/config.local.js` (gitignored) — it loads after the public config and overrides it.
+
+**`--host` loses the secure context.** `http://127.0.0.1` counts as one; `http://<lan-ip>` does not. From a phone over `--host` you will not get the camera (so no scanning) or the service worker (so no offline shell and no update banner). Everything else — layout, dialogs, focus styles, touch targets, the sommelier round-trip — works normally. Testing those two features on a phone means deploying, since GitHub Pages serves over HTTPS.
+
+Dev builds are minified exactly like production, deliberately: the rebuild writes to the same committed artifact, and leaving an unminified bundle there would change what ships. Sourcemaps are emitted either way.
+
 ## Deploying Edge Functions
 
 [`supabase/functions/`](supabase/functions/) is not covered by the frontend build or by GitHub Pages — functions deploy separately, and committing one does **not** ship it. Either use the Supabase dashboard (Edge Functions → Deploy a new function → via Editor, paste the file) or the CLI:
