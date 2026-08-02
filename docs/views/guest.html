@@ -24,14 +24,17 @@
   <!-- Cellar tab -->
   <div class="guest-pane" data-pane="cellar" id="guest-pane-cellar" role="tabpanel" aria-labelledby="guest-tab-cellar" tabindex="0">
     <div class="cellar-toolbar guest-toolbar" hidden id="guest-toolbar">
-      <input type="search" id="guest-search" placeholder="Search producer, wine, region…" autocomplete="off" />
-      <div class="filter-chips" id="guest-filters" role="tablist" aria-label="Filter by style">
-        <button class="chip active" data-style-filter="all">All</button>
-        <button class="chip" data-style-filter="red">Red</button>
-        <button class="chip" data-style-filter="white">White</button>
-        <button class="chip" data-style-filter="rose">Rosé</button>
-        <button class="chip" data-style-filter="sparkling">Sparkling</button>
-        <button class="chip" data-style-filter="sweet">Sweet</button>
+      <input type="search" id="guest-search" placeholder="Search producer, wine, region…" autocomplete="off" aria-label="Search the cellar" />
+      <!-- Toggle filters, not tabs — same change as cellar.html. This one sat
+           *inside* a real tabpanel, so it announced a nested tablist with none
+           of the behaviour, directly below the tabs that do have it. -->
+      <div class="filter-chips" id="guest-filters" role="group" aria-label="Filter by style">
+        <button type="button" class="chip active" data-style-filter="all" aria-pressed="true">All</button>
+        <button type="button" class="chip" data-style-filter="red" aria-pressed="false">Red</button>
+        <button type="button" class="chip" data-style-filter="white" aria-pressed="false">White</button>
+        <button type="button" class="chip" data-style-filter="rose" aria-pressed="false">Rosé</button>
+        <button type="button" class="chip" data-style-filter="sparkling" aria-pressed="false">Sparkling</button>
+        <button type="button" class="chip" data-style-filter="sweet" aria-pressed="false">Sweet</button>
       </div>
       <select id="guest-sort" aria-label="Sort">
         <option value="producer">Producer A–Z</option>

@@ -46,7 +46,59 @@ export async function createRequest({ requestType, context, includeCellar = true
     cellar_snapshot: snapshot,
   }).select().single();
   if (error) throw error;
+  requestCreatedHook?.(data);
   return data;
+}
+
+// ── Claim watch ──────────────────────────────────────────────────────
+//
+// A request row lands at status='pending'. A running watcher claims it within
+// about a second: pending → picked_up, claimed_by set. If the bridge isn't
+// running — laptop asleep, rebooted by an update, process died, and nothing
+// alerts on death — the row just stays pending.
+//
+// Both cases looked identical to the user for five minutes: the same pour
+// animation, then a timeout that *guessed* at the cause ("may be asleep"). The
+// status column already holds the answer, on a table the client can read. This
+// stops the guessing.
+//
+// Grace period first, because a claim normally takes ~1s and a brief blip
+// shouldn't flash a scary message. Then poll, and report transitions in both
+// directions — a watcher that comes back mid-wait should quietly correct the
+// message rather than leaving it wrong.
+export const CLAIM_GRACE_MS = 12_000;
+const CLAIM_POLL_MS = 5_000;
+
+let requestCreatedHook = null;
+// Lets withBusySubmit observe the request it is waiting on without every call
+// site having to thread an id through. Pass null to clear.
+export function onRequestCreated(fn) { requestCreatedHook = fn; }
+
+export function watchClaim(table, requestId, { onUnclaimed, onClaimed } = {}) {
+  let stopped = false;
+  let timer = null;
+  let reported = null;              // last state handed to the caller
+
+  const check = async () => {
+    if (stopped) return;
+    const { data } = await sb.from(table).select('status').eq('id', requestId).maybeSingle();
+    if (stopped || !data) return;
+    const claimed = data.status !== 'pending';
+    if (claimed === reported) return;
+    reported = claimed;
+    if (claimed) onClaimed?.(); else onUnclaimed?.();
+  };
+
+  const grace = setTimeout(() => {
+    check().catch(() => { /* transient; next tick retries */ });
+    timer = setInterval(() => { check().catch(() => {}); }, CLAIM_POLL_MS);
+  }, CLAIM_GRACE_MS);
+
+  return () => {
+    stopped = true;
+    clearTimeout(grace);
+    if (timer) clearInterval(timer);
+  };
 }
 
 // Wait for a pairing_response row matching this request_id. Resolves with the

@@ -1423,3 +1423,52 @@ body.guest-mode .topbar .userbox { display: none; }
   white-space: nowrap;
   border: 0;
 }
+
+/* ── Focus ────────────────────────────────────────────────────────
+   Until now only form fields had a focus style, plus three individual
+   components. Every button, nav link, chip and .btn anchor fell back to the
+   browser default ring, which against these dark custom backgrounds is often
+   invisible.
+
+   That mattered more than a normal checklist item, because the app invests
+   heavily in focus *management*: the modal focus trap, the roving tabindex on
+   guest tabs, askConfirm deliberately focusing Cancel so Enter backs out, and
+   announceResult moving focus to the results when an AI answer lands. All of
+   that puts focus somewhere chosen — and it was being put somewhere the user
+   could not see.
+
+   :focus-visible rather than :focus, so this shows for keyboard and
+   programmatic focus without drawing a ring on every mouse click. */
+:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+/* The result containers get focus moved to them after an AI response
+   (announceResult). They're regions, not controls — announce the landing with
+   a softer outline and no offset, so it reads as "you are here" rather than
+   "this is clickable". */
+#pairing-result:focus-visible,
+#flight-result:focus-visible,
+#flight-extras-result:focus-visible,
+#drink-now-result:focus-visible,
+#guest-result:focus-visible {
+  outline: 1px dashed var(--accent-2);
+  outline-offset: 6px;
+}
+
+/* ── Touch targets ────────────────────────────────────────────────
+   This is a phone-first PWA — the point of the bridge architecture is using it
+   from the kitchen. Two controls sat under the 44px iOS / 48px Android
+   guidance: filter chips at roughly 28px, and the top nav links at about 40px
+   on narrow screens, six across, as the app's primary navigation.
+
+   Both gain hit area without gaining visual weight: the chip keeps its font
+   size and small padding and grows via min-height, and the nav link keeps its
+   icon size. */
+.chip {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+.topbar nav a { min-height: 44px; min-width: 44px; }
