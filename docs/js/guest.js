@@ -22,7 +22,11 @@ export async function listBottlesForShare(token) {
 // its policies are `to authenticated` scoped to the owner's own folder, so an
 // anon guest can neither read the object nor sign it. The `guest-label` Edge
 // Function does the lookup with the service key after validating the share
-// link, so the storage path never reaches the browser.
+// link, and returns a ~10 minute signed URL.
+//
+// The signed URL does embed the object path (that's how Supabase signs), so
+// this hides the path as reusable data, not as a string. Knowing it grants
+// nothing — the bucket is private and only the function can sign.
 //
 // Returns null for "no photo" / invalid link / any failure — the caller treats
 // a missing photo as a normal, non-fatal state.

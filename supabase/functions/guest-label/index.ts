@@ -8,9 +8,19 @@
 // 0013_guest_plan_view.sql). Rather than relax either of those, this function
 // does the lookup server-side with the service key and hands back only a URL.
 //
-// The bottle's storage path is never exposed to the client, and the URL expires
-// in 10 minutes. Access is bound to an active share link — revoke or expire the
-// link and photos stop resolving immediately, with no lingering public URL.
+// The URL expires in 10 minutes and access is bound to an active share link —
+// revoke or expire the link and photos stop resolving immediately, with no
+// lingering public URL.
+//
+// Note what this does NOT hide: a Supabase signed URL embeds the object path
+// (.../object/sign/bottle-labels/<owner-uuid>/scan-<uuid>-front.jpg), so the
+// guest does see the bucket, the owner's user_id, and the filename. That was
+// verified to be inert — the bucket is private, so the bare path 400s without a
+// signature, the public-object route 400s, an anon-key read is refused by
+// Storage RLS, and a signature can't be replayed against a different object.
+// Signing requires the service key, which only this function holds. What the
+// share RPCs still withhold is the path as reusable *data* alongside the other
+// owner-private fields.
 //
 // Deploy:  supabase functions deploy guest-label
 // Verify:  curl "$SUPABASE_URL/functions/v1/guest-label?token=<t>&bottle_id=<id>" \
