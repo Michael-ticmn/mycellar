@@ -143,7 +143,23 @@ Guest label photos go through an Edge Function instead, which with the service k
 
 The share RPCs still withhold `label_image_path` alongside the other owner-private fields, so the path isn't available as reusable data. It *is* embedded in the signed URL itself — that's unavoidable with Supabase signing — but knowing it grants nothing: the bare path 400s, the public-object route 400s, an anon-key read is refused by Storage RLS, and a signature can't be replayed against a different object. All four were verified against the deployed function.
 
-**Throttle:** 60 requests per minute per token, returning 429 with `Retry-After`. Opening a bottle modal costs one request, so a real visit sits far below it. The counter is isolate-local — Supabase may run more than one isolate and they don't share state — so this is a speed bump, not a guarantee. A hard limit would need a counter in Postgres, which isn't worth a round-trip per request for label photos of your own wine. Revisit if this endpoint ever returns something that matters more, or lets guests *write* to Storage. Revoking the share link remains the real cutoff.
+**Throttle:** 60 requests per minute per token, returning 429 with `Retry-After`. Opening a bottle modal costs one request, so a real visit sits far below it.
+
+The counter is a row in `cellar27_guest_label_hits`, incremented atomically by `cellar27_guest_label_allow()` ([`0019`](../supabase/migrations/0019_guest_label_rate_limit.sql)) — same shape as the watcher's daily ceiling.
+
+**It has to be in Postgres, and this was learned the hard way.** The first version kept the counter in a module-level `Map` inside the Edge Function. Measured against the deployed function, it did nothing whatsoever: 80 sequential requests and then 100 concurrent requests with a single token produced **zero** 429s. Supabase hands each invocation a fresh isolate, so the Map never accumulates. An in-process counter cannot rate limit a process that doesn't persist. If you ever move this counter back into the function, re-run that test before believing it works:
+
+```
+for i in $(seq 1 80); do curl -s -o /dev/null -w "%{http_code}\n" \
+  "$SUPABASE_URL/functions/v1/guest-label?token=probe&bottle_id=00000000-0000-0000-0000-000000000000" \
+  -H "Authorization: Bearer $SUPABASE_ANON_KEY"; done | sort | uniq -c
+```
+
+Expect 429s after the 60th. All-403 means the limit is not in effect.
+
+**Fails open.** If the RPC is missing or errors, the request is served rather than blocked — a guest mid-tasting shouldn't lose photos because a migration lagged. So the limit is real only once `0019` is applied; `scripts/verify-migrations.mjs` checks that. Revoking the share link remains the actual cutoff.
+
+Revisit all of this if the endpoint ever returns something more sensitive, or lets guests *write* to Storage.
 
 `bottle_id` is validated as a UUID before use, so a malformed value gets a 400 rather than a 500 from a failed cast in Postgres.
 

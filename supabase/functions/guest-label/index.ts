@@ -33,38 +33,33 @@ const BUCKET = 'bottle-labels';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Per-token throttle. A guest opening bottle detail modals fires one request
-// per open, so a real visit is a handful per minute; 60 leaves enormous room
-// while still stopping a leaked token from being used to pull the whole cellar's
-// photos in a loop.
+// Per-token throttle: 60 requests per minute. A guest opening bottle detail
+// modals fires one request per open, so a real visit is a handful per minute;
+// 60 leaves enormous room while still stopping a leaked token from being used
+// to pull the whole cellar's photos in a loop.
 //
-// This is isolate-local, which makes it a speed bump rather than a guarantee:
-// Supabase may run several isolates, and they don't share state. That's the
-// honest scope. A hard limit would need a counter in Postgres, which isn't
-// worth a round-trip per request for label photos of your own wine — but revisit
-// if this endpoint ever returns something that matters more. The real
-// containment remains the share link: revoke it and this stops serving.
-const RATE_WINDOW_MS = 60_000;
+// The counter lives in Postgres, not in this process. An earlier version used a
+// module-level Map and was measured to do nothing at all: 80 sequential and then
+// 100 concurrent requests with one token produced zero 429s, because Supabase
+// hands each request a fresh isolate and the Map never accumulates. An
+// in-process counter cannot rate limit a process that doesn't persist.
+//
+// Fails OPEN. If the RPC is missing (migration 0019 not applied yet) or errors,
+// we serve the request rather than blocking a guest mid-tasting — the same
+// deploy-order tolerance bottles.js has for the pour RPC. That means the limit
+// is only real once 0019 is applied; verify with scripts/verify-migrations.mjs.
 const RATE_MAX = 60;
-const hits = new Map<string, number[]>();
 
-function rateLimited(token: string): boolean {
-  const now = Date.now();
-  const recent = (hits.get(token) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
-  if (recent.length >= RATE_MAX) {
-    hits.set(token, recent);
-    return true;
+async function rateLimited(sb: ReturnType<typeof createClient>, token: string): Promise<boolean> {
+  const { data, error } = await sb.rpc('cellar27_guest_label_allow', {
+    p_token: token,
+    p_max: RATE_MAX,
+  });
+  if (error) {
+    console.warn('rate check unavailable, allowing:', error.message);
+    return false;
   }
-  recent.push(now);
-  hits.set(token, recent);
-  // Bound memory in a long-lived isolate: drop tokens whose window has fully
-  // aged out. Cheap because it only runs once the map is already large.
-  if (hits.size > 1000) {
-    for (const [k, v] of hits) {
-      if (!v.some((t) => now - t < RATE_WINDOW_MS)) hits.delete(k);
-    }
-  }
-  return false;
+  return data === false;
 }
 
 // The guest app is served from GitHub Pages, so this is a cross-origin call.
@@ -95,18 +90,19 @@ Deno.serve(async (req) => {
   // cast — that path returned a 500 for what is plainly a bad request.
   if (!UUID_RE.test(bottleId)) return json({ error: 'invalid_bottle_id' }, 400);
 
-  if (rateLimited(token)) {
-    return new Response(JSON.stringify({ error: 'rate_limited' }), {
-      status: 429,
-      headers: { ...CORS, 'Content-Type': 'application/json', 'Retry-After': '60' },
-    });
-  }
-
   const sb = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
+
+  // Before the lookups, so a flood costs one round-trip rather than three.
+  if (await rateLimited(sb, token)) {
+    return new Response(JSON.stringify({ error: 'rate_limited' }), {
+      status: 429,
+      headers: { ...CORS, 'Content-Type': 'application/json', 'Retry-After': '60' },
+    });
+  }
 
   // 1. Resolve the share link. Same predicate the share RPCs use, so a revoked
   //    or expired link stops serving photos at exactly the same moment it stops

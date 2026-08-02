@@ -8,22 +8,29 @@ This repo is a monorepo:
 |------|------|--------|
 | [`docs/`](docs/) | Static HTML/CSS/JS app, served by GitHub Pages | live |
 | [`watcher/`](watcher/) | Node service that bridges Supabase ↔ Claude Code | live |
-| [`supabase/migrations/`](supabase/migrations/) | SQL migrations for the Supabase project | 0001–0015 applied · **0016–0018 pending** |
+| [`supabase/migrations/`](supabase/migrations/) | SQL migrations for the Supabase project | 0001–0015 applied · **0016–0019 pending** |
 | [`supabase/functions/`](supabase/functions/) | Supabase Edge Functions (Deno) | `guest-label` deployed |
 
 Migrations are applied by hand through the Supabase SQL editor — there is no
-migration runner wired up, so **committing one does not apply it**. Three are
+migration runner wired up, so **committing one does not apply it**. Four are
 committed but not yet run:
 [`0016_share_access_hardening.sql`](supabase/migrations/0016_share_access_hardening.sql),
 [`0017_search_path_sweep.sql`](supabase/migrations/0017_search_path_sweep.sql),
-and [`0018_atomic_pour_and_rls_perf.sql`](supabase/migrations/0018_atomic_pour_and_rls_perf.sql).
+[`0018_atomic_pour_and_rls_perf.sql`](supabase/migrations/0018_atomic_pour_and_rls_perf.sql)
+and [`0019_guest_label_rate_limit.sql`](supabase/migrations/0019_guest_label_rate_limit.sql).
 They touch unrelated objects, so order within the set doesn't matter.
+
+Check what's applied at any time with:
+
+```
+node scripts/verify-migrations.mjs
+```
 
 Note two files share the number `0015` (`0015_guest_message_delete.sql` and
 `0015_planned_flight_intent.sql`). They touch unrelated objects so order didn't
 matter, and both are already applied — renumbering them now would only break the
 match between the folder and what actually ran, which is the sole record of it
-(there's no ledger table). They stay as they are. Pick `0019` next.
+(there's no ledger table). They stay as they are. Pick `0020` next.
 
 ## Backups and rollback
 
@@ -49,7 +56,7 @@ it isn't a substitute for Supabase's own backups if the project itself is lost.
 |---|---|---|
 | Frontend | `git checkout main` and push | GitHub Pages serves `main`. Users pick it up on the next service-worker cycle. |
 | Watcher | `git checkout main`, then restart it | It runs whatever is on disk, so the checked-out branch decides the behaviour on restart. |
-| Database | Run [`supabase/rollback/0016_0018_rollback.sql`](supabase/rollback/0016_0018_rollback.sql) | Git can't undo an applied migration — this is the only way back. |
+| Database | Run [`supabase/rollback/0016_0019_rollback.sql`](supabase/rollback/0016_0019_rollback.sql) | Git can't undo an applied migration — this is the only way back. |
 
 The rollback SQL restores the database to commit `33e9d96` (v0.13.9). It touches
 only functions and policies: **no table is dropped and no row is modified**, so

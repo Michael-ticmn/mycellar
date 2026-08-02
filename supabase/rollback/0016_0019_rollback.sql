@@ -1,4 +1,4 @@
--- cellar27 — rollback for migrations 0016, 0017, 0018
+-- cellar27 — rollback for migrations 0016-0019
 --
 -- Restores the database to its state at commit 33e9d96 (v0.13.9), before the
 -- 2026-08 review. Run this if applying 0016-0018 breaks something and you need
@@ -337,3 +337,14 @@ create policy "users update own labels" on storage.objects
     bucket_id = 'bottle-labels'
     and (storage.foldername(name))[1] = auth.uid()::text
   );
+
+------------------------------------------------------------
+-- Undo 0019 — guest-label rate limit
+--
+-- The Edge Function fails open when this RPC is absent, so dropping it
+-- restores the pre-review behaviour (no limit) without breaking photo
+-- fetches. Drop the function first, then the table it uses.
+------------------------------------------------------------
+
+drop function if exists cellar27_guest_label_allow(text, int);
+drop table if exists cellar27_guest_label_hits;

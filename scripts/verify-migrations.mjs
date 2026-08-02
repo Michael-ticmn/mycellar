@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // cellar27 — post-migration verification
 //
-// Run after applying 0016-0018 to confirm they took, and that no data went
+// Run after applying 0016-0019 to confirm they took, and that no data went
 // missing. Read-only: it calls each new/changed function with deliberately
 // invalid arguments and checks how it fails, so it never writes a row.
 //
@@ -46,7 +46,7 @@ const check = (name, ok, detail = '') => {
 };
 const missing = (e) => e?.code === 'PGRST202' || /Could not find the function/i.test(e?.message || '');
 
-console.log('\ncellar27 — verifying migrations 0016-0018\n');
+console.log('\ncellar27 — verifying migrations 0016-0019\n');
 
 // 0018: the pour RPCs exist. Calling with a uuid that matches nothing returns
 // zero rows rather than erroring, so "no error" means the function is there.
@@ -55,6 +55,15 @@ for (const fn of ['cellar27_pour_bottle', 'cellar27_unpour_bottle']) {
   check(`0018  ${fn}`, !error,
     missing(error) ? 'NOT APPLIED — client is using the read-then-write fallback'
                    : error?.message?.slice(0, 60) || '');
+}
+
+// 0019: the guest-label rate limiter. Absent means the endpoint fails open and
+// has no limit at all — see SECURITY.md Layer 8 for why it can't live in the
+// Edge Function's memory.
+{
+  const { error } = await sb.rpc('cellar27_guest_label_allow', { p_token: 'verify-probe', p_max: 60 });
+  check('0019  cellar27_guest_label_allow', !error,
+    missing(error) ? 'NOT APPLIED — guest-label has no rate limit' : (error?.message?.slice(0, 50) || ''));
 }
 
 // 0016 / 0017: each function still runs and rejects an invalid token cleanly
