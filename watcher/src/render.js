@@ -67,6 +67,19 @@ function expectedCount(type) {
 // no actual signal. That invented mood then drives the framing of the
 // recommendation, which is wrong: the user only gave us the data in
 // ## Today and ## Context. Don't editorialize beyond it.
+// Appended to every prompt — pairing-family task bodies AND the scan/enrichment
+// request. The owner is in the US and reads these as everyday notes, so serving
+// temperatures were the jarring bit: the schema used to ask for temp_celsius,
+// which meant every tasting note said "16°C".
+//
+// Deliberately does NOT force wine volumes to US customary — 750 ml and 1.5 L
+// are the universal way bottles are described, including in the US, and
+// "25.4 fl oz" would read as wrong to anyone.
+const US_UNITS = `\n\nUNITS — the reader is in the United States:
+- Temperatures in Fahrenheit, always. Write them as "55°F". Never Celsius, and don't give both.
+- Any other measurement that has a US customary form should use it (inches, miles, ounces, pounds).
+- Exception: bottle volumes stay metric — 750 ml, 1.5 L magnum. That's the universal convention for wine and reads correctly in the US too.`;
+
 const NO_INVENTED_CONTEXT = `\n\nIMPORTANT — narrative discipline:
 - Only describe today using the actual day, date, and weather from the ## Today section above. Don't use day-name colloquialisms (no "a Tuesday", "Tuesday-feeling Friday", "save it for a Saturday", etc.). If you mean "weeknight" say "weeknight"; if you mean "special occasion" say "special occasion."
 - Don't invent the user's mood, vibe, or occasion. If the ## Context section doesn't say it's casual / special / a date / low-key / celebratory, don't project any of those onto their evening. Recommend the wine for the dish and the data given, not for an atmosphere you imagined.
@@ -138,7 +151,7 @@ Voice: speak directly to the guest ("you'll notice…", "try a bite of the…").
     default:
       return `Unrecognized request_type: ${type}.`;
   }
-  return body + NO_INVENTED_CONTEXT;
+  return body + NO_INVENTED_CONTEXT + US_UNITS;
 }
 
 export function renderPairingRequest(row, respondToPath, weather = null) {
@@ -462,7 +475,7 @@ completed: <ISO timestamp>
   "drinking_window_rationale": "...",
   "drink_window_start": 2026,
   "drink_window_end": 2030,
-  "serving": { "temp_celsius": 16, "decant_minutes": 30, "glass": "..." }
+  "serving": { "temp_fahrenheit": 60, "decant_minutes": 30, "glass": "..." }
 }
 \`\`\`
 
@@ -475,6 +488,11 @@ recommend drinking (the vintage year itself if it's ready on release; a later ye
 it needs bottle age); \`end\` = the last year to drink through. Base these on the
 specific wine — its tier, structure, and varietal aging potential — not a generic
 rule of thumb. If the wine has no vintage (non-vintage), set both to null.
+
+\`serving.temp_fahrenheit\` is Fahrenheit, not Celsius — a number like 55 or 62, never 13
+or 16. Sanity-check it: whites and sparkling land roughly 40–50°F, lighter reds 55–60°F,
+full reds 60–65°F. A value under 35 means you wrote Celsius by mistake.
+${US_UNITS}
 
 ## Narrative
 <markdown — what you see on the label(s), what was hard to read, the thoughtful summary>

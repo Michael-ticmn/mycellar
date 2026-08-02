@@ -2874,7 +2874,14 @@ function renderDetailsHTML(d) {
   if (d.drinking_window_rationale) out.push(`<h3>When to drink</h3><p>${escapeHtml(d.drinking_window_rationale)}</p>`);
   if (d.serving && typeof d.serving === 'object') {
     const bits = [];
-    if (d.serving.temp_celsius != null) bits.push(`Temp: ${d.serving.temp_celsius}°C`);
+    // Always display Fahrenheit. Enrichments before v0.13.9 stored
+    // `temp_celsius` (all 34 bottles at the time of the change), so convert
+    // those on read rather than rewriting stored rows — a bottle enriched
+    // under either schema renders the same way, and no backfill is required.
+    const tempF = d.serving.temp_fahrenheit != null
+      ? d.serving.temp_fahrenheit
+      : (d.serving.temp_celsius != null ? Math.round(d.serving.temp_celsius * 9 / 5 + 32) : null);
+    if (tempF != null) bits.push(`Temp: ${tempF}°F`);
     if (d.serving.decant_minutes != null) bits.push(`Decant: ${d.serving.decant_minutes} min`);
     if (d.serving.glass) bits.push(`Glass: ${d.serving.glass}`);
     if (bits.length) out.push(`<h3>Serving</h3><p>${bits.map((s) => escapeHtml(s)).join(' · ')}</p>`);
