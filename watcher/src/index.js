@@ -94,6 +94,15 @@ const CHANNEL_DEFS = {
   'scan-requests':    'scan_requests',
 };
 
+// Same reason: the startup sweep below awaits pickUp(), which reaches
+// hydratePlanContext(). Function declarations hoist, but these consts do not —
+// beside that function they sat in the TDZ for the whole sweep.
+const PLAN_BACKED_TYPES = new Set(['flight_plan', 'flight_guest']);
+const PLAN_CONTEXT_FIELDS = [
+  'title', 'occasion_date', 'theme', 'guests',
+  'narrative', 'picks', 'food', 'food_hint', 'notes_hint',
+];
+
 await ensureDirs();
 await sweepStaleRequests(); // catch up on anything queued while we were down
 await sweepStaleClaims();   // recover any picked_up rows abandoned by a prior crash
@@ -254,12 +263,6 @@ function scheduleReconnect(name) {
 // renderer reading every field off the context exactly as before. Inline values
 // win over fetched ones, so a client still sending the full context behaves
 // identically — that's what lets the app and the watcher deploy independently.
-const PLAN_BACKED_TYPES = new Set(['flight_plan', 'flight_guest']);
-const PLAN_CONTEXT_FIELDS = [
-  'title', 'occasion_date', 'theme', 'guests',
-  'narrative', 'picks', 'food', 'food_hint', 'notes_hint',
-];
-
 async function hydratePlanContext(row) {
   if (!PLAN_BACKED_TYPES.has(row.request_type)) return row;
   const planId = row.context?.planned_flight_id;
