@@ -70,6 +70,59 @@ function clearOpError(key) {
   }
 }
 
+// An unexpected throw out of pickUp() is the one failure shape nothing else
+// reports. Both sweeps swallow it so one bad row cannot stop the batch, and the
+// realtime path only writes the message onto the row — so a watcher that is up
+// and failing every request looks, from outside, exactly like a healthy one.
+// On 2026-08-18 that was not hypothetical: a TDZ ReferenceError failed 100% of
+// pairing requests, and the first anyone knew of it was the app refusing new
+// work once the stranded rows filled the 5-in-flight cap.
+//
+// Network errors are excluded on the same reasoning as logOpError(): this runs
+// on a laptop that sleeps, they arrive in bursts, and they clear on their own.
+// Everything else here means the watcher cannot do its job and needs a person.
+//
+// Reported per batch rather than per row: a sweep that fails five rows for one
+// reason should say five, not send one email that undercounts it and then
+// suppress the rest under the cooldown.
+let pickUpFailuresSinceStart = 0;
+
+function reportPickUpFailures(where, table, failures) {
+  const real = failures.filter((f) => !isNetworkError(f.error));
+  if (!real.length) return;
+  pickUpFailuresSinceStart += real.length;
+  const [{ error }] = real;
+  notify({
+    key: 'pickup-failure',
+    subject: `cellar27 — watcher is running but failing requests (${real.length} in ${where})`,
+    body: [
+      `The watcher is up and claiming rows, but pickUp() threw on ${real.length}`,
+      `row(s) in ${where} on ${table}. Nothing else reports this: the process is`,
+      `alive, realtime is subscribed, and the app looks normal until requests`,
+      `start piling up against the 5-in-flight cap.`,
+      ``,
+      `Time:  ${new Date().toISOString()}`,
+      `Host:  ${HOST}`,
+      `Failed this batch:  ${real.length}`,
+      `Failed since start: ${pickUpFailuresSinceStart}`,
+      ``,
+      `First error:`,
+      `  ${String(error?.stack || error?.message || error).slice(0, 400)}`,
+      ``,
+      `Rows: ${real.map((f) => f.id).join(', ')}`,
+      ``,
+      `Rows left in picked_up recover on their own — cellar27_sweep_stale_claims`,
+      `resets them after ${CONFIG.timeoutMinutes} min, twice, then marks them error.`,
+      `That retry is wasted if the cause is a code bug, so check first:`,
+      ``,
+      `  watcher/watcher.err.log   — full stack traces`,
+      `  watcher/README.md         — 'Where it runs' for the restart procedure`,
+      ``,
+      `Further emails on this are suppressed for the notify cooldown window.`,
+    ].join('\n'),
+  });
+}
+
 const sb = createClient(CONFIG.supabaseUrl, CONFIG.supabaseServiceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -128,11 +181,13 @@ async function sweepTable(table) {
   const { data, error } = await sb.from(table).select('*').eq('status', 'pending');
   if (error) { logOpError(`sweep ${table}`, error); return; }
   clearOpError(`sweep ${table}`);
+  const failures = [];
   for (const row of data || []) {
     log(`sweep: picking up stale ${table}.${row.id}`);
     try { await pickUp(table, row); }
-    catch (e) { err(`sweep pickUp ${row.id}:`, e); }
+    catch (e) { err(`sweep pickUp ${row.id}:`, e); failures.push({ id: row.id, error: e }); }
   }
+  reportPickUpFailures('the startup/reconnect sweep', table, failures);
 }
 async function sweepStaleRequests() {
   for (const table of ['pairing_requests', 'scan_requests']) {
@@ -170,7 +225,11 @@ function subscribeChannel(name) {
       async ({ new: row }) => {
         if (row.status !== 'pending') return;
         try { await pickUp(table, row); }
-        catch (e) { err(`${name} pickUp:`, e); await markError(table, row.id, String(e?.message || e)); }
+        catch (e) {
+          err(`${name} pickUp:`, e);
+          await markError(table, row.id, String(e?.message || e));
+          reportPickUpFailures('the realtime handler', table, [{ id: row.id, error: e }]);
+        }
       });
   // Register as current before subscribing, so a synchronously-delivered
   // SUBSCRIBED isn't mistaken for a stale channel's callback.
@@ -659,7 +718,10 @@ async function sweepStaleClaims() {
       .from(row.table_name).select('*').eq('id', row.request_id).single();
     if (fetchErr || !full) { err(`refetch retry row:`, fetchErr); continue; }
     try { await pickUp(row.table_name, full, { isRetry: true }); }
-    catch (e) { err(`retry pickUp ${row.request_id}:`, e); }
+    catch (e) {
+      err(`retry pickUp ${row.request_id}:`, e);
+      reportPickUpFailures('a stale-claim retry', row.table_name, [{ id: row.request_id, error: e }]);
+    }
   }
 }
 

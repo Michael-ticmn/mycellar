@@ -133,7 +133,7 @@ watcher/
 
 ## Email notifications
 
-When a watcher-side limit fires (policy denial or daily ceiling), the watcher can send an email so you know without checking logs. Set the SMTP env vars in `.env`:
+The watcher emails you when something needs a person, so you are not reading logs to find out. Set the SMTP env vars in `.env`:
 
 ```ini
 SMTP_HOST=smtp.gmail.com
@@ -146,4 +146,19 @@ NOTIFY_TO=you@gmail.com
 
 Leave any one blank to disable silently. `NOTIFY_COOLDOWN_MS` (default 30 min) suppresses repeated sends of the same limit-key so a runaway loop can't flood your inbox.
 
-The emails are informational — no inline approval. They tell you which limit fired and the SQL/env tweaks to grant more.
+The emails are informational — no inline approval.
+
+### What sends mail
+
+| Trigger | Cooldown key | What it means |
+| --- | --- | --- |
+| Policy denial | `policy:<user_id>` | A user hit a watcher-side limit. Body names the limit and the SQL/env tweak to grant more. |
+| Daily ceiling | `daily-ceiling` | `MAX_CLAUDE_CALLS_PER_DAY` reached. Resets midnight UTC. |
+| Fatal error | `watcher-fatal:<reason>` | The process is exiting on an uncaught error / rejection / chokidar failure. |
+| **pickUp failure** | `pickup-failure` | **The watcher is running but failing the requests it claims.** |
+
+That last one exists because it is the failure with no other symptom. Both sweeps catch per-row throws so one bad row cannot abort the batch, and the realtime path only writes the message onto the row — so a watcher failing *every* request still has a live process, `SUBSCRIBED` channels and a quiet `watcher.out.log`. Without this email the first sign is the app refusing new work, once the stranded rows fill the 5-in-flight cap. That is exactly how a startup-sweep bug went unnoticed for days in August 2026.
+
+Network errors are excluded — this runs on a laptop that sleeps, and those clear on their own (same rule the sweep logging uses). Failures are reported per batch, not per row, so the count in the subject is the real one rather than the first of five with the rest swallowed by the cooldown.
+
+Note what is still silent: a watcher that is *gone* sends nothing, because nothing is left running to send it. A reboot never reaches the fatal path. Detecting that needs something outside this process.
