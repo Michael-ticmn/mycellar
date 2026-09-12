@@ -84,20 +84,45 @@ export async function requestFlightPlanEnrichment(plan) {
   // host's existing include choices survive because we only ever append.
   if (Array.isArray(payload.outside_pours) && payload.outside_pours.length) {
     const current = Array.isArray(plan.picks) ? plan.picks : [];
-    const have = new Set(current.filter((p) => p.external)
-      .map((p) => String(p.name || '').trim().toLowerCase()));
-    const add = payload.outside_pours
-      .filter((o) => o && o.name && !have.has(String(o.name).trim().toLowerCase()))
-      .map((o) => ({
+    const wines   = current.filter((p) => !p.external);
+    const byName  = new Map(current.filter((p) => p.external)
+      .map((p) => [String(p.name || '').trim().toLowerCase(), p]));
+
+    // Refresh each proposed pour, but the host's include choice always wins over
+    // whatever the model returns - re-running enrichment must never quietly
+    // publish (or unpublish) something to guests.
+    const externals = [];
+    for (const o of payload.outside_pours) {
+      if (!o || !o.name) continue;
+      const key  = String(o.name).trim().toLowerCase();
+      const prev = byName.get(key);
+      const pos  = Number(o.position);
+      externals.push({
         external: true,
-        include:  false,
+        include:  prev ? prev.include === true : false,
         category: o.category || 'other',
         name:     o.name,
         detail:   o.detail  || null,
         serving:  o.serving || null,
         note:     o.note    || null,
-      }));
-    if (add.length) patch.picks = [...current, ...add];
+        position: Number.isFinite(pos) && pos > 0 ? Math.floor(pos) : null,
+      });
+      byName.delete(key);
+    }
+    // A pour the model has stopped proposing but the host chose to keep stays.
+    for (const kept of byName.values()) externals.push(kept);
+
+    // Splice into the wine order by 1-based position, because picks order IS
+    // serve order and the Tonight tab numbers pours by array index. Appending
+    // put a beer the narrative opens on at the end as "Pour 3".
+    // Ascending, so each insert lands before later ones shift the indices.
+    const merged = [...wines];
+    externals.filter((e) => e.position)
+      .sort((a, b) => a.position - b.position)
+      .forEach((e) => merged.splice(Math.min(Math.max(e.position - 1, 0), merged.length), 0, e));
+    externals.filter((e) => !e.position).forEach((e) => merged.push(e));
+
+    patch.picks = merged;
   }
   if (Object.keys(patch).length) await updatePlannedFlight(plan.id, patch);
   return { request: req, response, patch };
