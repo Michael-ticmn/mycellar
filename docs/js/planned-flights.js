@@ -125,6 +125,22 @@ export async function requestFlightPlanEnrichment(plan) {
     patch.picks = merged;
   }
   if (Object.keys(patch).length) await updatePlannedFlight(plan.id, patch);
+
+  // Soundtrack is patched SEPARATELY and tolerantly. planned_flights.soundtrack
+  // arrives with migration 0020, which is applied by hand in the SQL Editor - so
+  // between deploying this and running that, the column may not exist. Folding it
+  // into the patch above would make a missing column cost the whole enrichment
+  // its food, prep and outside pours. Degrading to "no soundtrack" is the right
+  // failure.
+  if (payload.soundtrack !== undefined) {
+    try {
+      await updatePlannedFlight(plan.id, { soundtrack: payload.soundtrack });
+      patch.soundtrack = payload.soundtrack;
+    } catch (e) {
+      console.warn('soundtrack not saved - is migration 0020 applied?', e.message);
+    }
+  }
+
   return { request: req, response, patch };
 }
 

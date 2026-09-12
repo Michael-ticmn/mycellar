@@ -1272,6 +1272,16 @@ body.guest-mode .topbar .userbox { display: none; }
   border-radius: var(--radius);
   white-space: pre-wrap;
 }
+/* Soundtrack - an arc across the evening, not a cue per pour. */
+.soundtrack-arc { margin: 0 0 0.75rem; }
+.soundtrack-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.6rem; }
+.soundtrack-list li { display: grid; gap: 0.15rem; }
+.soundtrack-phase {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--highlight);
+}
+.soundtrack-track { font-size: 0.95rem; }
+
 /* Outside pours - a beer/cider/cocktail the flight leans on that the cellar
    doesn't stock. Dashed edge marks them as not-a-bottle at a glance. */
 .outside-pour-card {

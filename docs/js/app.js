@@ -236,6 +236,24 @@ function markGuestActivitySeen(linkId) {
   catch { /* private mode */ }
 }
 
+// The evening's soundtrack. Read-only for now on both sides: it regenerates
+// with the enrichment, and a first pass should be judged before adding an
+// editor for it. Names only by design - the bridge agent has no network, so it
+// cannot verify a link and must never emit one (see migration 0020).
+function soundtrackHTML(plan, { heading = 'Soundtrack' } = {}) {
+  const st = plan && plan.soundtrack;
+  if (!st || (!st.arc && !(Array.isArray(st.suggestions) && st.suggestions.length))) return '';
+  const list = Array.isArray(st.suggestions) ? st.suggestions : [];
+  return `<section class="planned-soundtrack"><h2>${escapeHtml(heading)}</h2>
+    ${st.arc ? `<p class="soundtrack-arc">${escapeHtml(st.arc)}</p>` : ''}
+    ${list.length ? `<ul class="soundtrack-list">${list.map((t) => `<li>
+      ${t.phase ? `<span class="soundtrack-phase">${escapeHtml(t.phase)}</span>` : ''}
+      <span class="soundtrack-track"><strong>${escapeHtml(t.artist || '')}</strong>${t.title ? ` \u00b7 ${escapeHtml(t.title)}` : ''}</span>
+      ${t.why ? `<span class="muted">${escapeHtml(t.why)}</span>` : ''}
+    </li>`).join('')}</ul>` : ''}
+  </section>`;
+}
+
 // A pick is either a cellar bottle or an "outside pour" - a beer, cider or
 // cocktail the flight leans on that this app doesn't stock. Outside pours stay
 // suggestions until the host checks them in, so everything guest-facing filters
@@ -1197,6 +1215,7 @@ function renderTonightPane(root, plan, token) {
     ${headerHTML}
     ${introHTML}
     ${foodHTML}
+    ${soundtrackHTML(plan, { heading: 'What\'s playing' })}
     ${poursHTML}
   </div>`;
 
@@ -2417,7 +2436,7 @@ async function renderPlannedDetail(root, plan) {
     <p class="error planned-error" hidden></p>
   </section>`;
 
-  root.innerHTML = headerHTML + intentHTML + narrativeHTML + picksHTML + foodHTML + prepHTML + notesHTML + guestSectionHTML + actionsHTML;
+  root.innerHTML = headerHTML + intentHTML + narrativeHTML + picksHTML + foodHTML + soundtrackHTML(plan) + prepHTML + notesHTML + guestSectionHTML + actionsHTML;
 
   wirePlannedDetail(root, plan);
   renderPlannedGuestSection(root, plan);
