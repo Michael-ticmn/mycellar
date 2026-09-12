@@ -1055,6 +1055,14 @@ body.guest-mode .topbar .userbox { display: none; }
 
 /* ──────────── Guest "Tonight" tab (read-only) ──────────── */
 .guest-plan-tonight { display: grid; gap: 1.5rem; }
+
+/* Guest "scan to join" - centred under the banner so it reads at arm's length
+   on a display. .share-qr already supplies the white plate the scanner needs. */
+.guest-share { margin: 0.25rem 0 1rem; }
+.guest-share-panel {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 0.5rem; margin-top: 0.75rem;
+}
 .guest-tonight-head h1 { font-size: 1.6rem; margin: 0; color: var(--highlight); }
 .guest-tonight-head .muted { margin: 0.25rem 0 0; }
 

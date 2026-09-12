@@ -3,6 +3,19 @@
     <p class="muted">Loading shared cellar…</p>
   </div>
 
+  <!-- Scan to join: puts this same tasting on a guest's own phone, so the iPad
+       on the counter isn't the only way in. Stays hidden until mountGuest has
+       confirmed the link actually resolved - offering a QR for a revoked or
+       expired link would just hand out a dead end. -->
+  <div class="guest-share">
+    <button type="button" id="guest-share-btn" class="ghost"
+            aria-expanded="false" aria-controls="guest-share-panel" hidden>Scan to join</button>
+    <div class="guest-share-panel" id="guest-share-panel" hidden>
+      <div class="share-qr" id="guest-share-qr"></div>
+      <p class="muted">Scan to open this tasting on your own phone.</p>
+    </div>
+  </div>
+
   <!-- Proper tab semantics: each tab owns aria-selected and a roving tabindex,
        and points at its pane via aria-controls. app.js keeps all three in sync
        and handles arrow-key movement. Without that the roles were a promise the

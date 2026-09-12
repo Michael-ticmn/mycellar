@@ -547,6 +547,41 @@ async function refreshShareNavBadge() {
 }
 
 // ── Guest share view (anonymous, token-gated, read-only) ──────────
+// "Scan to join" on the guest view - a QR of this guest URL so someone looking
+// at the shared device can open the same tasting on their own phone.
+//
+// The token is already on screen in whatever opened this page, so the QR leaks
+// nothing new; it only saves typing a 32-char token. Uses the same self-hosted
+// window.QRCode global the owner share view uses, and CSP already permits the
+// data: image it produces (img-src 'self' data: blob:).
+function wireGuestShareQR() {
+  const btn   = $('#guest-share-btn');
+  const panel = $('#guest-share-panel');
+  const host  = $('#guest-share-qr');
+  if (!btn || !panel || !host) return;
+  btn.hidden = false;
+
+  let drawn = false;
+  btn.addEventListener('click', () => {
+    const opening = panel.hidden;
+    panel.hidden = !opening;
+    btn.setAttribute('aria-expanded', String(opening));
+    btn.textContent = opening ? 'Hide code' : 'Scan to join';
+
+    // Draw once, lazily. QRCode appends a canvas AND an img to its host, so
+    // redrawing on every toggle would stack duplicates inside the plate.
+    if (opening && !drawn && window.QRCode) {
+      new window.QRCode(host, {
+        text: location.href,
+        width: 200,
+        height: 200,
+        correctLevel: window.QRCode.CorrectLevel.M,
+      });
+      drawn = true;
+    }
+  });
+}
+
 async function mountGuest(token) {
   const banner = $('#guest-banner');
   const grid = $('#guest-grid');
@@ -575,6 +610,7 @@ async function mountGuest(token) {
     banner.innerHTML = `<p class="muted">Shared cellar · ${left} request${left === 1 ? '' : 's'} left</p>`;
   };
   renderBanner(meta);
+  wireGuestShareQR();
 
   let bottles;
   try { bottles = await listBottlesForShare(token); }
