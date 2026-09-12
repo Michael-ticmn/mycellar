@@ -76,6 +76,29 @@ export async function requestFlightPlanEnrichment(plan) {
   const patch = {};
   if (payload.food !== undefined) patch.food = payload.food;
   if (payload.prep !== undefined) patch.prep = payload.prep;
+
+  // Outside pours: non-cellar drinks the narrative leans on (a Maerzen with the
+  // pretzel, a cocktail to open). Appended to picks as suggestions with
+  // include:false - nothing reaches guests until the host ticks the box.
+  // Deduped by name so re-running enrichment doesn't stack copies, and the
+  // host's existing include choices survive because we only ever append.
+  if (Array.isArray(payload.outside_pours) && payload.outside_pours.length) {
+    const current = Array.isArray(plan.picks) ? plan.picks : [];
+    const have = new Set(current.filter((p) => p.external)
+      .map((p) => String(p.name || '').trim().toLowerCase()));
+    const add = payload.outside_pours
+      .filter((o) => o && o.name && !have.has(String(o.name).trim().toLowerCase()))
+      .map((o) => ({
+        external: true,
+        include:  false,
+        category: o.category || 'other',
+        name:     o.name,
+        detail:   o.detail  || null,
+        serving:  o.serving || null,
+        note:     o.note    || null,
+      }));
+    if (add.length) patch.picks = [...current, ...add];
+  }
   if (Object.keys(patch).length) await updatePlannedFlight(plan.id, patch);
   return { request: req, response, patch };
 }

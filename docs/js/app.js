@@ -236,6 +236,20 @@ function markGuestActivitySeen(linkId) {
   catch { /* private mode */ }
 }
 
+// A pick is either a cellar bottle or an "outside pour" - a beer, cider or
+// cocktail the flight leans on that this app doesn't stock. Outside pours stay
+// suggestions until the host checks them in, so everything guest-facing filters
+// through here.
+//
+// Forward note: a future myBar app is meant to own non-wine beverages properly.
+// `category` and `serving` are the seam - cellar27 stores a best guess and
+// renders whatever it is handed, so myBar can supersede those values later
+// without reshaping the picks array.
+function isVisiblePick(p) { return !p || !p.external || p.include === true; }
+function visiblePicks(plan) {
+  return (Array.isArray(plan?.picks) ? plan.picks : []).filter(isVisiblePick);
+}
+
 // Bottles referenced by guest suggestions, resolved for the current render.
 // Module-scoped because the card HTML is built three string-builders deep and
 // threading a Map through all of them buys nothing.
@@ -353,9 +367,9 @@ async function renderGuestActivity(activeLink) {
 
   // Per-pick Pour. Confirmed, because it decrements inventory and a misfire
   // in the middle of a party is tedious to unwind.
-  $$('[data-pour-bottle-id]', list).forEach((btn) => {
+  $$('[data-pour-now-bottle-id]', list).forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const id = btn.dataset.pourBottleId;
+      const id = btn.dataset.pourNowBottleId;
       const b  = _guestActivityBottles.get(id);
       const label = b ? [b.producer, b.wine_name].filter(Boolean).join(' · ') : 'this bottle';
       const ok = await askConfirm({
@@ -492,7 +506,7 @@ function guestActivityCardHTML(m) {
         const acts = b
           ? `<span class="guest-activity-pick-actions">
               <a href="#/bottle/${escapeAttr(b.id)}">Open</a>
-              <button type="button" data-pour-bottle-id="${escapeAttr(b.id)}">Pour</button>
+              <button type="button" data-pour-now-bottle-id="${escapeAttr(b.id)}">Pour</button>
             </span>`
           : '';
         return `<li>
@@ -1090,7 +1104,7 @@ function renderTonightPane(root, plan, token) {
   if (!root || !plan) return;
   const bottles  = Array.isArray(plan.bottles) ? plan.bottles : [];
   const bottleById = new Map(bottles.map((b) => [b.id, b]));
-  const picks    = Array.isArray(plan.picks)   ? plan.picks   : [];
+  const picks    = visiblePicks(plan);
   const food     = Array.isArray(plan.food)    ? plan.food    : [];
   const gv       = plan.guest_view || null;
   const intro    = (gv && gv.guest_intro) || plan.narrative || '';
@@ -1132,9 +1146,22 @@ function renderTonightPane(root, plan, token) {
   const poursHTML = picks.length ? `<section class="guest-tonight-pours">
     <h2>The pours</h2>
     ${picks.map((pick, i) => {
+      const num = i + 1;
+      // Outside pours carry their own copy - they get no AI walkthrough entry,
+      // because those are keyed one-per-bottle off the picks table.
+      if (pick.external) {
+        const xsub = [pick.category, pick.detail].filter(Boolean).map(escapeHtml).join(' \u00b7 ');
+        return `<article class="pour-block pour-block-external">
+          <div class="pour-num">Pour ${num}</div>
+          <h3>${escapeHtml(pick.name || 'Outside pour')}</h3>
+          ${xsub ? `<p class="muted">${xsub}</p>` : ''}
+          ${pick.note ? `<p class="pour-look">${escapeHtml(pick.note)}</p>` : ''}
+          ${pick.serving ? `<p class="pour-serving muted">${escapeHtml(pick.serving)}</p>` : ''}
+          ${token ? pourNoteWidgetHTML() : ''}
+        </article>`;
+      }
       const bottle = bottleById.get(pick.bottle_id);
       const w      = walkById.get(pick.bottle_id);
-      const num    = i + 1;
       const sub    = bottle ? [bottle.varietal, bottle.vintage, bottle.region, bottle.country].filter(Boolean).map(escapeHtml).join(' · ') : '';
       const title  = bottle ? `${escapeHtml(bottle.producer)}${bottle.wine_name ? ` <span class="muted">· ${escapeHtml(bottle.wine_name)}</span>` : ''}` : `<span class="muted">Unknown bottle</span>`;
       // Explicit affordance rather than a clickable heading — guests don't
@@ -2308,8 +2335,8 @@ async function renderPlannedDetail(root, plan) {
   // Pre-fetch each pick's bottle so we can show producer/varietal next to
   // its prep row. Tolerant of deleted bottles (unknown id renders muted).
   const picks = Array.isArray(plan.picks) ? plan.picks : [];
-  const pickById = await getBottlesByIds(picks.map((p) => p.bottle_id));
-  const bottles = picks.map((p) => ({ pick: p, bottle: pickById.get(p.bottle_id) || null }));
+  const pickById = await getBottlesByIds(picks.filter((p) => !p.external).map((p) => p.bottle_id));
+  const bottles = picks.map((p) => ({ pick: p, bottle: p.external ? null : (pickById.get(p.bottle_id) || null) }));
 
   const headerHTML = `
     <header class="planned-header">
@@ -2326,7 +2353,19 @@ async function renderPlannedDetail(root, plan) {
     : '';
 
   const picksHTML = `<section><h2>Picks</h2>
-    <div class="grid">${bottles.map(({ pick, bottle }) => bottle ? `
+    <div class="grid">${bottles.map(({ pick, bottle }) => pick.external ? `
+      <article class="bottle-card outside-pour-card">
+        <div class="bottle-meta">
+          <h3>${escapeHtml(pick.name || 'Outside pour')}</h3>
+          <p class="muted">${escapeHtml(pick.category || 'other')}${pick.detail ? ` \u00b7 ${escapeHtml(pick.detail)}` : ''}</p>
+          ${pick.note ? `<p>${escapeHtml(pick.note)}</p>` : ''}
+          ${pick.serving ? `<p class="muted">${escapeHtml(pick.serving)}</p>` : ''}
+          <label class="outside-pour-toggle">
+            <input type="checkbox" data-outside-pour="${escapeAttr(pick.name || '')}"${pick.include ? ' checked' : ''} />
+            Show this to guests
+          </label>
+        </div>
+      </article>` : bottle ? `
       <article class="bottle-card" data-bottle-id="${escapeAttr(bottle.id)}" data-style="${escapeAttr(bottle.style || '')}" tabindex="0">
         <div class="bottle-photo placeholder">${escapeHtml((bottle.producer || '?')[0])}</div>
         <div class="bottle-meta">
@@ -2589,6 +2628,28 @@ function wirePlannedDetail(root, plan) {
       catch (e) { showErr(e.message); }
     });
   }
+
+  // Outside-pour include toggles. Rewrites the whole picks array rather than
+  // patching one element: jsonb has no element-level PATCH, and picks is small.
+  // Matched by name because that is what the checkbox carries and what
+  // requestFlightPlanEnrichment dedupes on.
+  $$('[data-outside-pour]', root).forEach((box) => {
+    box.addEventListener('change', async () => {
+      const name = box.dataset.outsidePour;
+      try {
+        const fresh = await getPlannedFlight(id);
+        const picks = (Array.isArray(fresh?.picks) ? fresh.picks : []).map((p) =>
+          (p.external && String(p.name || '') === name)
+            ? { ...p, include: box.checked }
+            : p);
+        await updatePlannedFlight(id, { picks });
+        showErr(''); showSaved();
+      } catch (e) {
+        box.checked = !box.checked;   // put the UI back where the data is
+        showErr(e.message);
+      }
+    });
+  });
 
   // Food add/edit/remove — recompute the full food array on every change
   // and PATCH it. Cheap, correct, and avoids per-row state.

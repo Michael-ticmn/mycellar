@@ -1272,6 +1272,17 @@ body.guest-mode .topbar .userbox { display: none; }
   border-radius: var(--radius);
   white-space: pre-wrap;
 }
+/* Outside pours - a beer/cider/cocktail the flight leans on that the cellar
+   doesn't stock. Dashed edge marks them as not-a-bottle at a glance. */
+.outside-pour-card { border: 1px dashed var(--surface-2); }
+.outside-pour-toggle {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin-top: 0.5rem; font-size: 0.85rem; color: var(--muted);
+}
+.outside-pour-toggle input { width: auto; }
+.pour-block-external { border-left-style: dashed; }
+.pour-serving { font-size: 0.85rem; font-style: italic; }
+
 /* Per-pick row: name carries the weight, actions sit at the end and wrap
    under the name on a phone rather than squeezing it. */
 .guest-activity-recs li {
