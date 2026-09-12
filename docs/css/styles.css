@@ -1272,6 +1272,19 @@ body.guest-mode .topbar .userbox { display: none; }
   border-radius: var(--radius);
   white-space: pre-wrap;
 }
+/* Per-pick row: name carries the weight, actions sit at the end and wrap
+   under the name on a phone rather than squeezing it. */
+.guest-activity-recs li {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem;
+}
+.guest-activity-pick-name { font-weight: 600; }
+.guest-activity-pick-actions {
+  display: inline-flex; gap: 0.4rem; margin-left: auto; align-items: center;
+}
+.guest-activity-pick-actions button,
+.guest-activity-pick-actions a {
+  font-size: 0.75rem; padding: 0.2rem 0.5rem; white-space: nowrap;
+}
 .guest-activity-recs {
   list-style: none;
   padding: 0;

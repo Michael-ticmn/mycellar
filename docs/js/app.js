@@ -236,6 +236,11 @@ function markGuestActivitySeen(linkId) {
   catch { /* private mode */ }
 }
 
+// Bottles referenced by guest suggestions, resolved for the current render.
+// Module-scoped because the card HTML is built three string-builders deep and
+// threading a Map through all of them buys nothing.
+let _guestActivityBottles = new Map();
+
 async function renderGuestActivity(activeLink) {
   const section = $('#share-guest-activity');
   const list    = $('#share-guest-activity-list');
@@ -257,6 +262,20 @@ async function renderGuestActivity(activeLink) {
   if (!messages.length) {
     list.innerHTML = '<p class="muted">No guest activity yet. When guests use the share link to ask the sommelier or leave a note on Tonight, it shows up here. Past tastings stay visible after the link expires.</p>';
     return;
+  }
+
+  // Resolve every bottle a guest suggested to a real wine. The host HAS RLS
+  // access to `bottles` (unlike the anon guest client, which is why the guest
+  // side carries its own map) - this lookup was simply never done here, so
+  // picks rendered as raw uuids.
+  const pickIds = [...new Set(messages.flatMap((m) =>
+    (m.payload?.recommendations || []).map((r) => r.bottle_id).filter(Boolean)))];
+  _guestActivityBottles = new Map();
+  if (pickIds.length) {
+    try {
+      const rows = await getBottlesByIds(pickIds);
+      _guestActivityBottles = new Map((rows || []).map((b) => [b.id, b]));
+    } catch { /* names are a nicety - fall back to ids rather than blanking the feed */ }
   }
 
   // Group messages by share_link_id. Active link first (open), prior
@@ -288,24 +307,70 @@ async function renderGuestActivity(activeLink) {
     return guestActivityGroupHTML({ link, linkId, groupMessages, isActive, openByDefault: i === 0 });
   }).join('');
 
-  // Wire all Save-as-planned-flight buttons across all groups.
+  // Wire "Use these picks..." across all groups. One control, both
+  // destinations: start a plan, or append to one that already exists.
   const messagesById = new Map(messages.map((m) => [m.id, m]));
-  $$('[data-promote-message-id]', list).forEach((btn) => {
+  $$('[data-use-picks-message-id]', list).forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const message = messagesById.get(btn.dataset.promoteMessageId);
+      const message = messagesById.get(btn.dataset.usePicksMessageId);
       if (!message) return;
       const errEl = btn.parentElement?.querySelector('.guest-activity-error');
       const showErr = (msg) => { if (!errEl) return; errEl.hidden = !msg; errEl.textContent = msg || ''; };
+      showErr('');
+
+      // A failed plan list shouldn't cost the user the action - fall back to
+      // offering New plan only.
+      let plans = [];
+      try { plans = await listPlannedFlights(); } catch { /* new-plan only */ }
+
+      const choice = await askChoice({
+        title: 'Use these picks',
+        body: 'Start a new plan, or add them to one you already have.',
+        options: [
+          { value: '__new__', label: 'New plan…', primary: true },
+          ...plans.slice(0, 6).map((pl) => ({
+            value: pl.id,
+            label: `Add to ${pl.title || 'Untitled plan'}${pl.shared_via_link_id ? ' · shared' : ''}`,
+          })),
+          { value: null, label: 'Cancel', ghost: true },
+        ],
+      });
+      if (!choice) return;
+
       btn.disabled = true;
       const original = btn.textContent;
       btn.textContent = 'Saving…';
-      showErr('');
       try {
-        await promoteGuestFlightToPlanned(message);
+        if (choice === '__new__') await promoteGuestFlightToPlanned(message);
+        else await addGuestPicksToPlan(choice, message);
       } catch (err) {
         btn.disabled = false;
         btn.textContent = original;
         showErr(err.message);
+      }
+    });
+  });
+
+  // Per-pick Pour. Confirmed, because it decrements inventory and a misfire
+  // in the middle of a party is tedious to unwind.
+  $$('[data-pour-bottle-id]', list).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.pourBottleId;
+      const b  = _guestActivityBottles.get(id);
+      const label = b ? [b.producer, b.wine_name].filter(Boolean).join(' · ') : 'this bottle';
+      const ok = await askConfirm({
+        title: `Pour ${label}?`,
+        body: 'This decrements the bottle count in your cellar.',
+        confirmLabel: 'Pour',
+      });
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        await pourBottle(id);
+        showToast(`Poured ${label}.`);
+      } catch (err) {
+        btn.disabled = false;
+        showToast(friendlyError(err));
       }
     });
   });
@@ -417,23 +482,38 @@ function guestActivityCardHTML(m) {
   const ctxBits = ctxSummary(p.context, p.request_type);
   const recs    = Array.isArray(p.recommendations) ? p.recommendations : [];
   const recList = recs.length
-    ? `<ul class="guest-activity-recs">${recs.map((r) => `<li>
-        <span class="qty">${escapeHtml(r.confidence || 'medium')}</span>
-        <code>${escapeHtml(r.bottle_id)}</code>
-        ${r.reasoning ? `<span class="muted"> — ${escapeHtml(r.reasoning)}</span>` : ''}
-      </li>`).join('')}</ul>`
+    ? `<ul class="guest-activity-recs">${recs.map((r) => {
+        const b = _guestActivityBottles.get(r.bottle_id);
+        // A pick can outlive its bottle: suggested by a guest, then drunk or
+        // deleted. Say so rather than rendering a dead id.
+        const name = b
+          ? `${escapeHtml(b.producer || '')}${b.wine_name ? ` <span class="muted">· ${escapeHtml(b.wine_name)}</span>` : ''}${b.vintage ? ` ${escapeHtml(String(b.vintage))}` : ''}`
+          : '<span class="muted">no longer in the cellar</span>';
+        const acts = b
+          ? `<span class="guest-activity-pick-actions">
+              <a href="#/bottle/${escapeAttr(b.id)}">Open</a>
+              <button type="button" data-pour-bottle-id="${escapeAttr(b.id)}">Pour</button>
+            </span>`
+          : '';
+        return `<li>
+          <span class="qty">${escapeHtml(r.confidence || 'medium')}</span>
+          <span class="guest-activity-pick-name">${name}</span>
+          ${r.reasoning ? `<span class="muted"> — ${escapeHtml(r.reasoning)}</span>` : ''}
+          ${acts}
+        </li>`;
+      }).join('')}</ul>`
     : '';
   const narrative = p.narrative
     ? narrativeBlockHTML(p.narrative, { heading: 'Narrative', headingTag: 'h4' })
     : '';
-  // Only flight results can be promoted to a planned flight — pairings
-  // and drink-now don't have the picks-as-flight semantics. The button
-  // mirrors the host's own "Save this flight" flow on the flight
-  // builder result panel.
-  const canPlan = p.request_type === 'flight' && recs.length > 0;
-  const planBtn = canPlan
+  // Any suggestion carrying picks can feed a plan - pairing, flight and
+  // drink-now alike. The old gate was request_type === 'flight' only, on the
+  // reasoning that pairings lack picks-as-flight semantics; but a three-course
+  // pairing IS the evening's plan, so the gate is now simply "has picks".
+  // "Plan", not "flight": a flight is one way to generate one, not the thing.
+  const planBtn = recs.length
     ? `<div class="guest-activity-actions">
-        <button type="button" data-promote-message-id="${escapeAttr(m.id)}">Save as planned flight</button>
+        <button type="button" data-use-picks-message-id="${escapeAttr(m.id)}">Use these picks…</button>
         <p class="error guest-activity-error" hidden></p>
       </div>`
     : '';
@@ -451,12 +531,53 @@ function guestActivityCardHTML(m) {
   </article>`;
 }
 
-// Owner clicked "Save as planned flight" on a guest-shared flight
+// Owner chose "New plan" from a guest suggestion. Works for any request
 // result. Same flow as the host's own Save button on the flight
 // builder: persist immediately so the row exists even if the AI
 // enrichment fails, navigate to the detail page, fire the flight_plan
 // enrichment in the background. Title carries the guest's name so the
 // host can tell at a glance which guest's flight it was.
+// Append a guest's picks to a plan that already exists.
+//
+// Deliberately additive and narrow. The plan keeps its own narrative (that
+// column is NOT NULL and singular, and welding two narratives into one field
+// produces mush), plus its food, prep and user_notes - all of which a Replace
+// would have destroyed. That is why there is no Replace: it is a destructive
+// shortcut for something New-plan-then-reattach already does safely.
+//
+// Provenance rides on each appended pick instead, so the detail page can show
+// where it came from.
+//
+// Known consequence, surfaced rather than hidden: guest_view.pour_walkthrough
+// is keyed by bottle_id, so an appended bottle shows in the guests' Tonight tab
+// with no pour guidance until the walkthrough is regenerated.
+async function addGuestPicksToPlan(planId, message) {
+  const plan = await getPlannedFlight(planId);
+  if (!plan) throw new Error('That plan no longer exists.');
+
+  const from     = message.guest_name || 'a guest';
+  const existing = Array.isArray(plan.picks) ? plan.picks : [];
+  const have     = new Set(existing.map((pk) => pk.bottle_id));
+  const incoming = (message.payload?.recommendations || [])
+    .filter((r) => r.bottle_id && !have.has(r.bottle_id))
+    .map((r) => ({
+      bottle_id:  r.bottle_id,
+      confidence: r.confidence || null,
+      reasoning:  r.reasoning  || null,
+      added_from: from,
+    }));
+  if (!incoming.length) throw new Error('Those picks are already in that plan.');
+
+  await updatePlannedFlight(planId, { picks: [...existing, ...incoming] });
+
+  const n = incoming.length;
+  const noun = `${n} pick${n === 1 ? '' : 's'}`;
+  showToast(plan.shared_via_link_id
+    ? `Added ${noun} from ${from}. Guests won't see pour notes for them until you refresh the walkthrough.`
+    : `Added ${noun} from ${from}.`);
+  location.hash = `#/planned/${planId}`;
+}
+
 async function promoteGuestFlightToPlanned(message) {
   const p = message.payload || {};
   const ctx = p.context || {};
