@@ -341,6 +341,10 @@ input:focus, select:focus, textarea:focus {
 .narrative dt { color: var(--muted); }
 .narrative dd { margin: 0; }
 .narrative ul { margin: 0.25rem 0; padding-left: 1.2rem; }
+/* Reading measure - prose must not run the full --maxw on tablet/desktop.
+   Phones never showed this because the viewport did the constraining. */
+.narrative,
+.planned-intent { max-width: 68ch; }
 
 /* Phase placeholders */
 .placeholder-view {
@@ -407,6 +411,17 @@ input:focus, select:focus, textarea:focus {
     padding-right:  max(1rem, env(safe-area-inset-right));
     padding-bottom: max(4rem, env(safe-area-inset-bottom));
   }
+}
+
+/* Installed PWA on iOS/iPadOS: `black-translucent` renders the page UNDER the
+   status bar. env(safe-area-inset-top) reports a real value in portrait but ~0
+   in iPad landscape, so the max() above collapsed to 12px of design padding and
+   the status bar covered the top half of the 48px nav buttons. Floor the
+   clearance at 24px so landscape gets it too. Must stay after the @supports
+   block - same specificity, so source order decides.  Confirmed 2026-09-11:
+   portrait fine, landscape dead on the upper half. */
+@media (display-mode: standalone) {
+  .topbar { padding-top: max(1.5rem, env(safe-area-inset-top)); }
 }
 
 /* ── Scan queue tray ───────────────────────────────────────────── */
