@@ -557,11 +557,30 @@ async function refreshShareNavBadge() {
 //
 // selectTab is generic over [data-tab]/[data-pane], so the tab itself needs no
 // JS beyond unhiding it - which is why this stays a few lines.
-function wireGuestShareQR() {
+// Absolute date first, relative only as a hint. A guest deciding whether to
+// scan wants to know if this dies tonight or next week; "in 137h" makes them
+// do arithmetic. Relative is dropped past 48h, where it stops being readable.
+function formatShareExpiry(iso) {
+  if (!iso) return '';
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  const hours = Math.round((at - Date.now()) / 36e5);
+  if (hours <= 0) return 'This link has expired.';
+  const when = at.toLocaleString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+  return `Link expires ${when}${hours < 48 ? ` (about ${hours}h from now)` : ''}.`;
+}
+
+function wireGuestShareQR(meta) {
   const tab  = $('#guest-tab-share');
   const host = $('#guest-share-qr');
   if (!tab || !host) return;
   tab.hidden = false;
+
+  const exp = $('#guest-share-expiry');
+  if (exp) exp.textContent = formatShareExpiry(meta && meta.expires_at);
 
   // Drawn once, eagerly. The pane is hidden until its tab is selected, but
   // QRCode renders to a fixed-size canvas and needs no layout, so there is
@@ -605,7 +624,7 @@ async function mountGuest(token) {
     banner.innerHTML = `<p class="muted">Shared cellar · ${left} request${left === 1 ? '' : 's'} left</p>`;
   };
   renderBanner(meta);
-  wireGuestShareQR();
+  wireGuestShareQR(meta);
 
   let bottles;
   try { bottles = await listBottlesForShare(token); }
