@@ -341,10 +341,18 @@ input:focus, select:focus, textarea:focus {
 .narrative dt { color: var(--muted); }
 .narrative dd { margin: 0; }
 .narrative ul { margin: 0.25rem 0; padding-left: 1.2rem; }
-/* Reading measure - prose must not run the full --maxw on tablet/desktop.
-   Phones never showed this because the viewport did the constraining. */
+/* Reading measure + centring.  Prose must not run the full --maxw (1100px) on
+   tablet/desktop; phones never showed it because the viewport did the
+   constraining.  `main` is ALREADY centred at --maxw, so capping a block
+   without auto margins just strands the column against the left edge.
+   Centre the whole column - heading, prose and the sections around it - rather
+   than the paragraphs alone, or the <h2> ends up left of the text it
+   introduces. */
 .narrative,
 .planned-intent { max-width: 68ch; }
+.narrative-block,
+.planned-intent,
+#guest-tonight-root { max-width: 68ch; margin-inline: auto; }
 
 /* Phase placeholders */
 .placeholder-view {
