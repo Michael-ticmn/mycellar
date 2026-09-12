@@ -783,7 +783,9 @@ body.guest-mode .topbar nav,
 body.guest-mode .topbar .userbox { display: none; }
 
 /* Guest share view: tab strip */
-.guest-tabs { display: flex; gap: 0.25rem; margin: 0.75rem 0 1rem; border-bottom: 1px solid var(--surface-2); }
+/* flex-wrap matters: six tabs overflow a ~390px phone, and a tab scrolled off
+   the edge is a tab nobody finds - which defeats moving Share into the bar. */
+.guest-tabs { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0.75rem 0 1rem; border-bottom: 1px solid var(--surface-2); }
 .guest-tab {
   background: transparent;
   border: 0;
@@ -1056,12 +1058,11 @@ body.guest-mode .topbar .userbox { display: none; }
 /* ──────────── Guest "Tonight" tab (read-only) ──────────── */
 .guest-plan-tonight { display: grid; gap: 1.5rem; }
 
-/* Guest "scan to join" - centred under the banner so it reads at arm's length
-   on a display. .share-qr already supplies the white plate the scanner needs. */
-.guest-share { margin: 0.25rem 0 1rem; }
-.guest-share-panel {
+/* Share tab pane - centred so the code reads at arm's length on a display.
+   .share-qr already supplies the white plate a scanner needs. */
+.guest-share-pane {
   display: flex; flex-direction: column; align-items: center;
-  gap: 0.5rem; margin-top: 0.75rem;
+  gap: 0.75rem; text-align: center;
 }
 .guest-tonight-head h1 { font-size: 1.6rem; margin: 0; color: var(--highlight); }
 .guest-tonight-head .muted { margin: 0.25rem 0 0; }

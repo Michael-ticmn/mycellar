@@ -3,19 +3,6 @@
     <p class="muted">Loading shared cellar…</p>
   </div>
 
-  <!-- Scan to join: puts this same tasting on a guest's own phone, so the iPad
-       on the counter isn't the only way in. Stays hidden until mountGuest has
-       confirmed the link actually resolved - offering a QR for a revoked or
-       expired link would just hand out a dead end. -->
-  <div class="guest-share">
-    <button type="button" id="guest-share-btn" class="ghost"
-            aria-expanded="false" aria-controls="guest-share-panel" hidden>Scan to join</button>
-    <div class="guest-share-panel" id="guest-share-panel" hidden>
-      <div class="share-qr" id="guest-share-qr"></div>
-      <p class="muted">Scan to open this tasting on your own phone.</p>
-    </div>
-  </div>
-
   <!-- Proper tab semantics: each tab owns aria-selected and a roving tabindex,
        and points at its pane via aria-controls. app.js keeps all three in sync
        and handles arrow-key movement. Without that the roles were a promise the
@@ -27,6 +14,7 @@
     <button class="guest-tab"        data-tab="pair"     role="tab" id="guest-tab-pair"     aria-controls="guest-pane-pair"     aria-selected="false" tabindex="-1">Pair</button>
     <button class="guest-tab"        data-tab="flight"   role="tab" id="guest-tab-flight"   aria-controls="guest-pane-flight"   aria-selected="false" tabindex="-1">Flight</button>
     <button class="guest-tab"        data-tab="drinknow" role="tab" id="guest-tab-drinknow" aria-controls="guest-pane-drinknow" aria-selected="false" tabindex="-1">Drink Now</button>
+    <button class="guest-tab"        data-tab="share"    role="tab" id="guest-tab-share"    aria-controls="guest-pane-share"    aria-selected="false" tabindex="-1" hidden>Share</button>
   </nav>
 
   <!-- Tonight tab — populated only when the host has attached a planned flight -->
@@ -135,5 +123,13 @@
       <button type="submit">Suggest tonight's bottle</button>
     </form>
     <div id="guest-drinknow-result"></div>
+  </div>
+
+  <!-- Share tab - hand this tasting to someone else's phone. The pane is built
+       from the same .share-qr plate the owner share view uses. -->
+  <div class="guest-pane guest-share-pane" data-pane="share" id="guest-pane-share" role="tabpanel" aria-labelledby="guest-tab-share" tabindex="0" hidden>
+    <h1>Share this tasting</h1>
+    <p class="muted">Scan to open the same shared cellar on your own phone.</p>
+    <div class="share-qr" id="guest-share-qr"></div>
   </div>
 </section>
