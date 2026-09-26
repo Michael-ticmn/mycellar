@@ -1545,3 +1545,140 @@ body.guest-mode .topbar .userbox { display: none; }
   align-items: center;
 }
 .topbar nav a { min-height: 44px; min-width: 44px; }
+
+/* ── Evening mode (#/planned/<id>/evening) ─────────────────────────
+   The host's view on the night: an iPad propped on the counter, read from a
+   step away. Chrome is hidden, type is large, and the whole view is one
+   fixed screen - the course scrolls inside itself if the copy runs long, so
+   Back/Next never leave the bottom edge. Landscape puts music beside the
+   course; portrait and phones stack it underneath. */
+body.evening-mode .topbar { display: none; }
+body.evening-mode main { max-width: none; padding: 0; }
+.planned-evening-entry { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: 0 0 1.5rem; }
+.planned-evening-entry .btn { font-size: 1.05rem; padding: 0.65rem 1.25rem; }
+.planned-evening-entry .btn:hover { background: var(--accent-2); text-decoration: none; }
+
+.evening {
+  position: fixed; inset: 0;
+  display: grid; grid-template-rows: auto 1fr auto;
+  height: 100dvh;
+  background: var(--bg);
+  z-index: 5;
+}
+.evening-bar, .evening-nav {
+  display: flex; align-items: center; gap: 1rem;
+  padding: 0.6rem max(1rem, env(safe-area-inset-left)) 0.6rem max(1rem, env(safe-area-inset-right));
+  background: var(--surface);
+}
+.evening-bar { border-bottom: 1px solid var(--surface-2); }
+.evening-nav {
+  border-top: 1px solid var(--surface-2);
+  padding-bottom: max(0.6rem, env(safe-area-inset-bottom));
+}
+/* Same status-bar clearance the topbar needs in the installed app. */
+@media (display-mode: standalone) {
+  .evening-bar { padding-top: max(1.5rem, env(safe-area-inset-top)); }
+}
+.evening-exit {
+  min-height: 44px; display: inline-flex; align-items: center;
+  padding: 0 0.75rem; border: 1px solid var(--surface-2); border-radius: var(--radius);
+  color: var(--text);
+}
+.evening-exit:hover { text-decoration: none; background: var(--surface-2); }
+.evening-title {
+  flex: 1; min-width: 0;
+  font-family: var(--serif); font-size: 1.2rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.evening-wake { font-size: 0.8rem; white-space: nowrap; }
+
+.evening-body {
+  display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  min-height: 0;
+}
+.evening-course, .evening-music {
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 1.5rem clamp(1rem, 3vw, 2.5rem);
+}
+.evening-music { background: var(--surface); border-left: 1px solid var(--surface-2); }
+@media (max-width: 900px), (orientation: portrait) {
+  .evening-body { grid-template-columns: 1fr; overflow-y: auto; }
+  .evening-course, .evening-music { overflow: visible; }
+  .evening-music { border-left: 0; border-top: 1px solid var(--surface-2); }
+}
+
+.evening-kicker {
+  font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--muted);
+}
+.evening-h { font-size: clamp(1.8rem, 4vw, 2.8rem); line-height: 1.1; margin: 0.25rem 0 0.4rem; }
+.evening-sub { font-size: 1.05rem; margin: 0 0 1rem; }
+.evening-serve {
+  display: inline-block; margin: 0 0 1rem;
+  padding: 0.4rem 0.8rem; border-radius: 999px;
+  background: var(--surface-2); font-size: 0.95rem;
+}
+.evening-lead { font-size: clamp(1.1rem, 2vw, 1.35rem); line-height: 1.5; margin: 0 0 1.25rem; white-space: pre-wrap; }
+.evening-cue {
+  font-size: 1.1rem; margin: 0 0 1rem;
+  padding: 0.75rem 1rem; background: var(--surface); border-radius: var(--radius);
+}
+.evening-cue-when {
+  display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--highlight); margin-bottom: 0.2rem;
+}
+.evening-transition { font-style: italic; margin: 0 0 1rem; }
+.evening-next {
+  margin: 1.5rem 0 0; padding-top: 1rem;
+  border-top: 1px dashed var(--surface-2);
+}
+.evening-pour { border-left: 6px solid transparent; padding-left: 1rem; }
+.evening-pour[data-style="light_red"]   { border-left-color: #c45050; }
+.evening-pour[data-style="medium_red"]  { border-left-color: #8b1a1a; }
+.evening-pour[data-style="full_red"]    { border-left-color: #5a1212; }
+.evening-pour[data-style="light_white"] { border-left-color: #d4cc88; }
+.evening-pour[data-style="full_white"]  { border-left-color: #b89858; }
+.evening-pour[data-style="rose"]        { border-left-color: #d07878; }
+.evening-pour[data-style="sparkling"]   { border-left-color: #d8c878; }
+.evening-pour[data-style="dessert"]     { border-left-color: #a8682a; }
+.evening-pour[data-style="fortified"]   { border-left-color: #8a3818; }
+.evening-pour[data-external] { border-left-style: dashed; border-left-color: var(--surface-2); }
+.evening-block h2 { margin-top: 1rem; }
+.evening-list { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.4rem; font-size: 1.05rem; }
+.evening-hint { margin-top: 1.5rem; }
+
+.evening-music h2 { margin-top: 0; }
+.evening-phases { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0 0 1rem; }
+.evening-phase, .evening-phase-auto {
+  min-height: 44px; padding: 0.4rem 0.9rem; border-radius: 999px;
+  background: transparent; border: 1px solid var(--surface-2);
+  text-transform: capitalize;
+}
+.evening-phase.active { background: var(--accent); border-color: var(--accent-2); }
+.evening-phase-auto { color: var(--muted); text-transform: none; font-size: 0.9rem; }
+.evening-arc { margin: 0 0 1rem; }
+.evening-tracks { list-style: none; margin: 0; padding: 0; display: grid; gap: 1.1rem; }
+.evening-tracks li { display: grid; gap: 0.3rem; }
+.evening-track { font-size: 1.1rem; }
+.evening-why { font-size: 0.95rem; }
+.evening-find { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.2rem; }
+.evening-find a {
+  min-height: 44px; display: inline-flex; align-items: center;
+  padding: 0 0.9rem; border: 1px solid var(--surface-2); border-radius: var(--radius);
+  font-size: 0.95rem;
+}
+.evening-find a:hover { text-decoration: none; background: var(--surface-2); }
+
+.evening-nav > button { min-height: 52px; min-width: 110px; font-size: 1.1rem; }
+.evening-dots { flex: 1; display: flex; justify-content: center; flex-wrap: wrap; gap: 0.2rem; }
+.evening-dot {
+  width: 32px; height: 32px; min-width: 0; padding: 0;
+  background: transparent; border: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.evening-dot::before {
+  content: ''; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--surface-2);
+}
+.evening-dot.active::before { background: var(--highlight); width: 12px; height: 12px; }
+.evening-dot:hover { background: transparent; }

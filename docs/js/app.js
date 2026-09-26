@@ -78,6 +78,9 @@ async function loadView(name) {
 
 async function render(providedSession) {
   const { route, params } = parseHash();
+  // Any navigation leaves evening mode: restores the chrome, drops the wake
+  // lock and the key/visibility listeners. mountEvening re-enters if needed.
+  leaveEveningMode();
 
   // Guest share route: anonymous, token-gated, no auth required.
   if (route === 'guest') {
@@ -127,7 +130,7 @@ async function mountView(route, params = []) {
     case 'drink-now':  return mountDrinkNow();
     case 'pairing':    return mountPairing();
     case 'flight':     return mountFlight();
-    case 'planned':    return mountPlanned(params[0]);
+    case 'planned':    return mountPlanned(params[0], params[1]);
     case 'manage':     return mountManage();
     case 'scan':       return mountManage(); // legacy alias
     case 'bottle':     return mountBottleDetail(params[0]);
@@ -2251,10 +2254,11 @@ function mountFlight() {
 
 // ── Planned flights ───────────────────────────────────────────────
 
-async function mountPlanned(id) {
+async function mountPlanned(id, sub) {
   const root = $('#planned-root');
   if (!root) return;
-  if (id) await mountPlannedDetail(root, id);
+  if (id && sub === 'evening') await mountEvening(root, id);
+  else if (id) await mountPlannedDetail(root, id);
   else    await mountPlannedList(root);
 }
 
@@ -2367,6 +2371,11 @@ async function renderPlannedDetail(root, plan) {
       </p>
     </header>`;
 
+  const eveningHTML = visiblePicks(plan).length
+    ? `<p class="planned-evening-entry"><a class="btn" href="#/planned/${escapeAttr(plan.id)}/evening">Start the evening</a>
+        <span class="muted">One course per screen, for the night itself.</span></p>`
+    : '';
+
   const narrativeHTML = plan.narrative
     ? narrativeBlockHTML(plan.narrative, { heading: 'Narrative' })
     : '';
@@ -2436,10 +2445,350 @@ async function renderPlannedDetail(root, plan) {
     <p class="error planned-error" hidden></p>
   </section>`;
 
-  root.innerHTML = headerHTML + intentHTML + narrativeHTML + picksHTML + foodHTML + soundtrackHTML(plan) + prepHTML + notesHTML + guestSectionHTML + actionsHTML;
+  root.innerHTML = headerHTML + eveningHTML + intentHTML + narrativeHTML + picksHTML + foodHTML + soundtrackHTML(plan) + prepHTML + notesHTML + guestSectionHTML + actionsHTML;
 
   wirePlannedDetail(root, plan);
   renderPlannedGuestSection(root, plan);
+}
+
+// ── Evening mode (host, on the night) ─────────────────────────────
+// The planned flight as the host runs it: one course per screen, big type,
+// for an iPad propped on the counter. Guests already get Tonight on the share
+// link; this is the host-side twin, so it reuses the same walkthrough copy and
+// adds what only the host needs - glass, decant, and what to open next.
+//
+// Music follows the courses: the soundtrack's phases are spread across the
+// pours in serve order, and the host can pin a phase by tapping it. The music
+// buttons are SEARCHES built here from the names, never links from the model
+// (migration 0020): a search cannot be dead, and needs no paid service.
+//
+// No new data: everything comes off the plan row and its bottles. The only
+// state is the current course and pinned phase, kept per plan in localStorage
+// so leaving for YouTube and coming back lands on the same screen.
+
+let _eveningCleanup = null;
+
+function leaveEveningMode() {
+  document.body.classList.remove('evening-mode');
+  if (_eveningCleanup) {
+    try { _eveningCleanup(); } catch { /* best effort */ }
+    _eveningCleanup = null;
+  }
+}
+
+const eveningStateKey = (id) => `cellar27.evening.${id}`;
+function loadEveningState(id) {
+  try { return JSON.parse(localStorage.getItem(eveningStateKey(id))) || {}; }
+  catch { return {}; }
+}
+function saveEveningState(id, state) {
+  try { localStorage.setItem(eveningStateKey(id), JSON.stringify(state)); }
+  catch { /* private mode */ }
+}
+
+// Suggestions grouped by phase, in the order the model gave them. A missing
+// phase label still gets a group, so an unlabeled soundtrack shows as one.
+function soundtrackPhases(plan) {
+  const list = Array.isArray(plan?.soundtrack?.suggestions) ? plan.soundtrack.suggestions : [];
+  const phases = [];
+  for (const t of list) {
+    if (!t || !(t.artist || t.title)) continue;
+    const label = String(t.phase || '').trim() || 'Tonight';
+    let ph = phases.find((p) => p.label.toLowerCase() === label.toLowerCase());
+    if (!ph) { ph = { label, tracks: [] }; phases.push(ph); }
+    ph.tracks.push(t);
+  }
+  return phases;
+}
+
+// Course -> phase. The welcome screen opens the night, pours spread evenly,
+// and the last pour always lands on the last phase: dessert music belongs with
+// the dessert wine even when there are fewer pours than phases.
+function autoPhaseIndex(slideIdx, slideCount, phaseCount) {
+  const pourCount = slideCount - 1;
+  if (phaseCount <= 1 || pourCount <= 0 || slideIdx === 0) return 0;
+  const i = slideIdx - 1;
+  if (pourCount > 1 && i >= pourCount - 1) return phaseCount - 1;
+  return Math.min(phaseCount - 1, Math.floor((i * phaseCount) / pourCount));
+}
+
+function musicSearchLinks(t) {
+  const q = encodeURIComponent([t.artist, t.title].filter(Boolean).join(' '));
+  return {
+    youtube: `https://www.youtube.com/results?search_query=${q}`,
+    spotify: `https://open.spotify.com/search/${q}`,
+  };
+}
+
+async function mountEvening(root, id) {
+  root.innerHTML = '<p class="muted">Loading…</p>';
+  let plan;
+  try { plan = await getPlannedFlight(id); }
+  catch (e) { root.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`; return; }
+  if (!plan) { root.innerHTML = '<p class="muted">Planned flight not found.</p>'; return; }
+
+  const picks = visiblePicks(plan);
+  if (!picks.length) {
+    root.innerHTML = `<p class="muted">This plan has no pours yet.</p>
+      <p><a href="#/planned/${escapeAttr(id)}">Back to the plan</a></p>`;
+    return;
+  }
+
+  const bottleById = await getBottlesByIds(picks.filter((p) => !p.external).map((p) => p.bottle_id));
+  const gv = plan.guest_view || null;
+  const walk = (gv && Array.isArray(gv.pour_walkthrough)) ? gv.pour_walkthrough : [];
+  const walkById = new Map(walk.filter((w) => w?.bottle_id).map((w) => [w.bottle_id, w]));
+  const slides = [{ kind: 'welcome' }, ...picks.map((pick, i) => ({
+    kind: 'pour',
+    num: i + 1,
+    pick,
+    bottle: pick.external ? null : (bottleById.get(pick.bottle_id) || null),
+    walk: pick.external ? null : (walkById.get(pick.bottle_id) || null),
+  }))];
+  const phases = soundtrackPhases(plan);
+
+  // Two awaits above: if the host navigated away meanwhile, don't take over
+  // the screen for a route they already left.
+  if (location.hash !== `#/planned/${id}/evening`) return;
+
+  const saved = loadEveningState(id);
+  const state = {
+    idx: Number.isInteger(saved.idx) ? Math.min(Math.max(saved.idx, 0), slides.length - 1) : 0,
+    pin: Number.isInteger(saved.pin) && saved.pin < phases.length ? saved.pin : null,
+  };
+
+  document.body.classList.add('evening-mode');
+  root.innerHTML = `<div class="evening">
+    <header class="evening-bar">
+      <a class="evening-exit" href="#/planned/${escapeAttr(id)}" aria-label="Exit evening mode">✕ Exit</a>
+      <span class="evening-title">${escapeHtml(plan.title || "Tonight's flight")}</span>
+      <span class="evening-wake muted" data-wake></span>
+    </header>
+    <div class="evening-body">
+      <section class="evening-course" data-course aria-live="polite"></section>
+      <aside class="evening-music" data-music aria-label="Music"></aside>
+    </div>
+    <footer class="evening-nav">
+      <button type="button" class="ghost" data-ev="prev">‹ Back</button>
+      <div class="evening-dots" data-dots></div>
+      <button type="button" data-ev="next">Next ›</button>
+    </footer>
+  </div>`;
+
+  const courseEl = $('[data-course]', root);
+  const musicEl  = $('[data-music]', root);
+  const dotsEl   = $('[data-dots]', root);
+  const prevBtn  = $('[data-ev="prev"]', root);
+  const nextBtn  = $('[data-ev="next"]', root);
+
+  const paint = () => {
+    const slide = slides[state.idx];
+    courseEl.innerHTML = slide.kind === 'welcome'
+      ? eveningWelcomeHTML(plan, slides)
+      : eveningPourHTML(plan, slide, slides[state.idx + 1] || null, picks.length);
+    const phaseIdx = state.pin ?? autoPhaseIndex(state.idx, slides.length, phases.length);
+    musicEl.innerHTML = eveningMusicHTML(plan, phases, phaseIdx, state.pin != null, state.idx === 0);
+    dotsEl.innerHTML = slides.map((s, i) => `<button type="button" class="evening-dot${i === state.idx ? ' active' : ''}"
+      data-ev-go="${i}" aria-label="${i === 0 ? 'Welcome' : `Pour ${i}`}"${i === state.idx ? ' aria-current="step"' : ''}></button>`).join('');
+    prevBtn.disabled = state.idx === 0;
+    nextBtn.disabled = state.idx === slides.length - 1;
+    courseEl.scrollTop = 0;
+    courseEl.parentElement.scrollTop = 0; // stacked layout scrolls the body, not the course
+    saveEveningState(id, state);
+  };
+  const go = (idx) => {
+    if (idx < 0 || idx >= slides.length || idx === state.idx) return;
+    state.idx = idx;
+    paint();
+  };
+
+  prevBtn.addEventListener('click', () => go(state.idx - 1));
+  nextBtn.addEventListener('click', () => go(state.idx + 1));
+  dotsEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ev-go]');
+    if (b) go(Number(b.dataset.evGo));
+  });
+  musicEl.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-phase]');
+    if (chip) { state.pin = Number(chip.dataset.phase); paint(); return; }
+    if (e.target.closest('[data-phase-auto]')) { state.pin = null; paint(); }
+  });
+
+  // Swipe between courses. Horizontal only, and far enough that a scroll of
+  // the pour copy never reads as a swipe.
+  const body = $('.evening-body', root);
+  let touchX = null, touchY = null;
+  body.addEventListener('touchstart', (e) => {
+    const t = e.changedTouches[0]; touchX = t.clientX; touchY = t.clientY;
+  }, { passive: true });
+  body.addEventListener('touchend', (e) => {
+    if (touchX == null) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchX, dy = t.clientY - touchY;
+    touchX = touchY = null;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    go(state.idx + (dx < 0 ? 1 : -1));
+  }, { passive: true });
+
+  const onKey = (e) => {
+    if (e.target.closest?.('input, textarea, select')) return;
+    if (e.key === 'ArrowRight') go(state.idx + 1);
+    else if (e.key === 'ArrowLeft') go(state.idx - 1);
+    else if (e.key === 'Escape') location.hash = `#/planned/${id}`;
+  };
+  document.addEventListener('keydown', onKey);
+
+  // Keep the screen on. The browser drops the lock whenever the page is
+  // hidden (switching to YouTube, locking the iPad), so it is re-requested on
+  // every return. Where the API is missing, say so rather than pretend.
+  const wakeEl = $('[data-wake]', root);
+  let lock = null;
+  let active = true;
+  const acquire = async () => {
+    if (!('wakeLock' in navigator)) { wakeEl.textContent = 'Screen may sleep'; return; }
+    try {
+      lock = await navigator.wakeLock.request('screen');
+      if (!active) { lock.release().catch(() => {}); return; }
+      wakeEl.textContent = 'Screen stays on';
+      lock.addEventListener('release', () => { if (active) wakeEl.textContent = ''; });
+    } catch {
+      wakeEl.textContent = 'Screen may sleep';
+    }
+  };
+  const onVisible = () => { if (document.visibilityState === 'visible') acquire(); };
+  document.addEventListener('visibilitychange', onVisible);
+  acquire();
+
+  _eveningCleanup = () => {
+    active = false;
+    document.removeEventListener('keydown', onKey);
+    document.removeEventListener('visibilitychange', onVisible);
+    if (lock) lock.release().catch(() => {});
+  };
+
+  paint();
+}
+
+// Name for a pick, as plain text (escaped by the caller).
+function eveningPickName(pick, bottle) {
+  if (pick.external) return pick.name || 'Outside pour';
+  if (!bottle) return 'Unknown bottle';
+  return `${bottle.producer}${bottle.wine_name ? ` · ${bottle.wine_name}` : ''}`;
+}
+
+function eveningPrepFor(plan, bottleId) {
+  const prep = plan.prep || {};
+  const find = (k) => (Array.isArray(prep[k]) ? prep[k] : []).find((x) => x && x.bottle_id === bottleId) || null;
+  return {
+    chill:  find('chill')?.minutes ?? null,
+    openBy: find('open_by')?.minutes ?? null,
+    decant: find('decanters'),
+    glass:  find('glassware')?.type || '',
+  };
+}
+
+function eveningWelcomeHTML(plan, slides) {
+  const date = plan.occasion_date
+    ? new Date(plan.occasion_date + 'T00:00:00').toLocaleDateString('en-US',
+        { weekday: 'long', month: 'long', day: 'numeric' })
+    : '';
+  const intro = plan.guest_view?.guest_intro || plan.narrative || '';
+  const food = (Array.isArray(plan.food) ? plan.food : []).filter((f) => f && f.name);
+
+  // Everything that has to happen before a pour, in serve order: the one
+  // list the host wants before guests arrive.
+  const prepItems = slides.filter((s) => s.kind === 'pour' && !s.pick.external).map((s) => {
+    const p = eveningPrepFor(plan, s.pick.bottle_id);
+    const bits = [];
+    if (p.chill)  bits.push(`chill ${p.chill} min`);
+    if (p.openBy) bits.push(`open ${p.openBy} min ahead`);
+    if (p.decant) bits.push('decant');
+    return bits.length ? `<li><strong>Pour ${s.num}</strong> ${escapeHtml(eveningPickName(s.pick, s.bottle))}: ${escapeHtml(bits.join(', '))}</li>` : '';
+  }).filter(Boolean);
+
+  return `<div class="evening-kicker">Welcome${date ? ` · ${escapeHtml(date)}` : ''}</div>
+    <h1 class="evening-h">${escapeHtml(plan.title || "Tonight's flight")}</h1>
+    ${intro ? `<p class="evening-lead">${escapeHtml(intro)}</p>` : ''}
+    ${prepItems.length ? `<section class="evening-block"><h2>Before the first pour</h2><ul class="evening-list">${prepItems.join('')}</ul></section>` : ''}
+    ${food.length ? `<section class="evening-block"><h2>On the table</h2><ul class="evening-list">${food.map((f) =>
+      `<li><strong>${escapeHtml(f.name)}</strong>${f.kind ? ` <span class="muted">${escapeHtml(f.kind)}</span>` : ''}</li>`).join('')}</ul></section>` : ''}
+    <p class="muted evening-hint">Swipe or tap Next for the first pour.</p>`;
+}
+
+function eveningPourHTML(plan, slide, nextSlide, pourCount) {
+  const { pick, bottle, walk, num } = slide;
+  const name = eveningPickName(pick, bottle);
+  const sub = pick.external
+    ? [pick.category, pick.detail].filter(Boolean).join(' · ')
+    : bottle ? [bottle.varietal, bottle.vintage, bottle.region].filter(Boolean).join(' · ') : '';
+
+  const serve = [];
+  if (pick.external) {
+    if (pick.serving) serve.push(escapeHtml(pick.serving));
+  } else {
+    const p = eveningPrepFor(plan, pick.bottle_id);
+    if (p.glass) serve.push(`Glass: ${escapeHtml(p.glass)}`);
+    if (p.decant) serve.push(`Decant${p.decant.why ? ` (${escapeHtml(p.decant.why)})` : ''}`);
+  }
+
+  const look = walk?.what_to_look_for || (pick.external ? pick.note : pick.reasoning) || '';
+  const when = String(walk?.food_when || '').toLowerCase();
+  const whenLabel = when === 'before' ? 'Before this pour' : when === 'after' ? 'After this pour' : 'With this pour';
+  const cue = walk?.food_cue && walk.food_cue.toLowerCase() !== 'none'
+    ? `<p class="evening-cue"><span class="evening-cue-when">${escapeHtml(whenLabel)}</span> ${escapeHtml(walk.food_cue)}</p>`
+    : '';
+
+  // What the NEXT pour needs doing now. Minutes are the plan's lead times, so
+  // this is a reminder, not a timer.
+  let nextUp = '';
+  if (nextSlide && nextSlide.kind === 'pour') {
+    const nextName = escapeHtml(eveningPickName(nextSlide.pick, nextSlide.bottle));
+    const bits = [];
+    if (!nextSlide.pick.external) {
+      const p = eveningPrepFor(plan, nextSlide.pick.bottle_id);
+      if (p.openBy) bits.push(`open it about ${p.openBy} min ahead`);
+      if (p.decant) bits.push('decant it');
+    }
+    nextUp = `<p class="evening-next"><span class="muted">Next up:</span> ${nextName}${bits.length ? `, ${escapeHtml(bits.join(' and '))}` : ''}</p>`;
+  }
+
+  return `<article class="evening-pour" data-style="${escapeAttr(bottle?.style || '')}"${pick.external ? ' data-external' : ''}>
+    <div class="evening-kicker">Pour ${num} of ${pourCount}</div>
+    <h1 class="evening-h">${escapeHtml(name)}</h1>
+    ${sub ? `<p class="evening-sub muted">${escapeHtml(sub)}</p>` : ''}
+    ${serve.length ? `<p class="evening-serve">${serve.join(' · ')}</p>` : ''}
+    ${look ? `<p class="evening-lead">${escapeHtml(look)}</p>` : ''}
+    ${cue}
+    ${walk?.transition ? `<p class="evening-transition muted">${escapeHtml(walk.transition)}</p>` : ''}
+    ${nextUp}
+  </article>`;
+}
+
+function eveningMusicHTML(plan, phases, phaseIdx, pinned, isWelcome) {
+  if (!phases.length) {
+    return `<h2>Music</h2><p class="muted">No soundtrack on this plan. Re-ask the sommelier from the plan page to get one.</p>`;
+  }
+  const arc = plan.soundtrack?.arc;
+  const phase = phases[phaseIdx] || phases[0];
+  const chips = phases.length > 1 ? `<div class="evening-phases" role="group" aria-label="Music phase">
+      ${phases.map((p, i) => `<button type="button" class="evening-phase${i === phaseIdx ? ' active' : ''}" data-phase="${i}"
+        aria-pressed="${i === phaseIdx}">${escapeHtml(p.label)}</button>`).join('')}
+      ${pinned ? '<button type="button" class="evening-phase-auto" data-phase-auto>Follow the courses</button>' : ''}
+    </div>` : '';
+  return `<h2>Music</h2>
+    ${chips}
+    ${isWelcome && arc ? `<p class="evening-arc muted">${escapeHtml(arc)}</p>` : ''}
+    <ul class="evening-tracks">${phase.tracks.map((t) => {
+      const links = musicSearchLinks(t);
+      return `<li>
+        <span class="evening-track"><strong>${escapeHtml(t.artist || '')}</strong>${t.title ? ` · ${escapeHtml(t.title)}` : ''}</span>
+        ${t.why ? `<span class="muted evening-why">${escapeHtml(t.why)}</span>` : ''}
+        <span class="evening-find">
+          <a href="${escapeAttr(links.youtube)}" target="_blank" rel="noopener">Find on YouTube</a>
+          <a href="${escapeAttr(links.spotify)}" target="_blank" rel="noopener">Find on Spotify</a>
+        </span>
+      </li>`;
+    }).join('')}</ul>`;
 }
 
 // Owner-side guest-link controls inside the planned flight detail page.
