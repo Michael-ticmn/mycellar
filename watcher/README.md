@@ -4,25 +4,41 @@ Node service that bridges Supabase Realtime ↔ a file-drop folder that Claude C
 
 ## Where it runs
 
-A detached background `node.exe` process on Windows — no PM2, no Windows service, no Scheduled Task. Started via PowerShell `Start-Process` so it survives any terminal closing. Logs go to `watcher/watcher.out.log` and `watcher/watcher.err.log` (gitignored).
+A background `node.exe` process on Windows — no PM2, no Windows service. Logs go to `watcher/watcher.out.log` and `watcher/watcher.err.log` (gitignored).
+
+Started at logon by the **`cellar27-watcher`** Scheduled Task (added 2026-09-19, after a reboot left it down for four days). The task runs [`start-watcher.ps1`](start-watcher.ps1), which skips starting if a watcher is already up, rotates the previous run's logs to `.bak` (keeping the last 10), then runs node in the foreground so the task tracks it. Mirrors the existing `vault27-watcher` task: user `MRJ`, interactive logon, limited privileges, no execution time limit.
+
+**It only starts at logon.** The task's "restart on failure" (3 attempts, 1 minute apart) does not cover the wrapper being killed after it launched. On 2026-09-20 the wrapper exited `0xC000013A` (killed from outside, cause unknown) and the watcher stayed down until a manual restart on 09-25, with requests going unanswered. A repeating trigger that re-runs the launcher was considered and declined (2026-09-26), so a dead watcher stays dead until the next logon or a manual start. If requests sit pending, check here first.
+
+```powershell
+Get-ScheduledTask -TaskName 'cellar27-watcher'          # State: Running when healthy, Ready = watcher is down
+Start-ScheduledTask -TaskName 'cellar27-watcher'        # start it (preferred way to restart)
+Stop-ScheduledTask  -TaskName 'cellar27-watcher'        # stop it (also kills node)
+```
+
+The guard matches this repo's `src\index.js` by **full path**. myvinyl and mycabinet also run watchers as `node src/index.js`, and the original relative match mistook either one for cellar27's (fixed 2026-09-26). Anything that finds or kills this watcher must match the full path too.
+
+Starting it by hand with `Start-Process` (below) still works and survives any terminal closing; the task's guard means a later logon won't start a second copy. Do NOT append to the logs with PowerShell `>>` — Windows PowerShell 5.1 writes UTF-16 and mangles the file.
 
 Bridge dir defaults to `~/cellar27-bridge/` (override with `BRIDGE_DIR` in `.env`).
 
 ### Find / restart it
 
 ```powershell
-# Find the running watcher
+# Find the running watcher. Full path only: a bare '*src/index.js*' also matches
+# (and the kill below would also stop) the myvinyl and mycabinet watchers.
+$watcherDir = "$PWD\watcher"   # adjust if cwd isn't repo root
+$script = "$watcherDir\src\index.js"
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-  Where-Object { $_.CommandLine -like '*src/index.js*' } |
+  Where-Object { $_.CommandLine -like "*$script*" } |
   Select-Object ProcessId, CommandLine
 
 # Restart in place (kill + start detached)
-$watcherDir = "$PWD\watcher"   # adjust if cwd isn't repo root
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-  Where-Object { $_.CommandLine -like '*src/index.js*' } |
+  Where-Object { $_.CommandLine -like "*$script*" } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-Start-Process -FilePath "node.exe" -ArgumentList "src/index.js" `
+Start-Process -FilePath "node.exe" -ArgumentList "`"$script`"" `
   -WorkingDirectory $watcherDir -WindowStyle Hidden `
   -RedirectStandardOutput "$watcherDir\watcher.out.log" `
   -RedirectStandardError  "$watcherDir\watcher.err.log"
