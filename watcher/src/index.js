@@ -8,6 +8,7 @@ import { parsePairingResponse, parseScanResponse } from './parse.js';
 import { askClaude, describeFailure } from './claude.js';
 import { denyReason, isOwnedStoragePath } from './policy.js';
 import { notify } from './notify.js';
+import { beat } from './heartbeat.js';
 
 const log = (...args) => console.log(new Date().toISOString(), ...args);
 const err = (...args) => console.error(new Date().toISOString(), ...args);
@@ -135,6 +136,12 @@ const channels = new Map();
 const reconnect = new Map();
 let sweepTimer = null;
 
+// For heartbeat.js: last status per channel name, and whether the last
+// stale-claim sweep reached Supabase. Declared before the top-level await below,
+// which reaches both through the startup sweep (same TDZ hazard as CHANNEL_DEFS).
+const channelStatus = {};
+let lastSweepOk = null;
+
 // Channel definitions — name → table. Used by both initial subscribe and
 // reconnect, so we don't drift if the row-handler shape ever needs to
 // change. Declared before top-level await so subscribeChannel() (called
@@ -243,6 +250,8 @@ function onChannelStatus(name, ch, status) {
   if (channels.get(name) !== ch) return;
 
   log(`${name} channel:`, status);
+  channelStatus[name] = status;
+  beat({ channels: channelStatus, sweepOk: lastSweepOk });
   if (status === 'SUBSCRIBED') {
     const state = reconnect.get(name);
     if (state?.attempts) {
@@ -693,6 +702,8 @@ async function sweepStaleClaims() {
     p_timeout_minutes: CONFIG.timeoutMinutes,
     p_max_retries: 2,
   });
+  lastSweepOk = !error;
+  beat({ channels: channelStatus, sweepOk: lastSweepOk });
   if (error) { logOpError('sweep_stale_claims', error); return; }
   clearOpError('sweep_stale_claims');
   for (const row of data || []) {

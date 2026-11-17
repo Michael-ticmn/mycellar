@@ -51,6 +51,32 @@ Get-Content "$watcherDir\watcher.out.log" -Tail 40 -Wait
 
 See [`BUILD_SPEC.md` §2](../BUILD_SPEC.md) for the architecture overview.
 
+## Running under systemd (Linux host)
+
+The watcher needs only Node 24 and outbound network: no Claude Code, no inbound port. The unit is [`deploy/cellar27-watcher.service`](deploy/cellar27-watcher.service).
+
+| Path | Owner / mode | What |
+| --- | --- | --- |
+| `/srv/cellar27/app` | admin user, not writable by the service | `git clone` of this repo; `npm ci --omit=dev` in `watcher/` |
+| `/srv/cellar27/state` | `cellar27:cellar27` | `heartbeat.json`, the only thing the watcher writes |
+| `/etc/cellar27/watcher.env` | `root:root 0600` | the secrets (`.env.example` keys), read by systemd as root and handed to the process |
+
+Values with spaces in `watcher.env` go in double quotes (systemd and dotenv both strip them). `BRIDGE_DIR`, `AUTO_INVOKE` and `CLAUDE_BIN` are leftovers from the `claude --print` days and are ignored.
+
+```bash
+sudo useradd --system --home-dir /srv/cellar27 --shell /usr/sbin/nologin cellar27
+sudo install -d -o cellar27 -g cellar27 -m 750 /srv/cellar27/state
+sudo install -d -o root -g root -m 700 /etc/cellar27
+# copy watcher.env in without echoing it; then:
+sudo install -m 644 watcher/deploy/cellar27-watcher.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now cellar27-watcher
+journalctl -u cellar27-watcher -f          # logs (no log files on this host)
+```
+
+**Updating:** `git pull` in `/srv/cellar27/app`, `npm ci --omit=dev` in `watcher/` if the lockfile changed, then `sudo systemctl restart cellar27-watcher`. A restart abandons any call in flight; the stale-claim sweep re-runs it.
+
+**Liveness:** with `HEARTBEAT_FILE` set (the unit sets it), [`src/heartbeat.js`](src/heartbeat.js) rewrites `/srv/cellar27/state/heartbeat.json` on every channel status change and after every stale-claim sweep (every 2 min): `{"at", "ok", "sweep_ok", "channels"}`. `ok` is true when both Realtime channels are `SUBSCRIBED` and the last sweep reached Supabase. A monitor should alert when `ok` is false or `at` is older than about 5 minutes. The file holds nothing secret.
+
 ## What it does
 
 - Subscribes to `pairing_requests` and `scan_requests` rows where `status='pending'`

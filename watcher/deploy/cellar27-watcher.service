@@ -1,0 +1,51 @@
+# systemd unit for the cellar27 watcher on a Linux host.
+# Install: /etc/systemd/system/cellar27-watcher.service, then
+#   systemctl daemon-reload && systemctl enable --now cellar27-watcher
+# Layout it expects (see watcher/README.md, "Running under systemd"):
+#   /srv/cellar27/app      git checkout of this repo, not writable by the service user
+#   /srv/cellar27/state    owned by the service user; heartbeat.json lives here
+#   /etc/cellar27/watcher.env   secrets, root:root 0600 (systemd reads it as root)
+
+[Unit]
+Description=cellar27 watcher (Supabase requests -> Claude API)
+Wants=network-online.target
+After=network-online.target
+# A crash loop stops after 10 failures in 5 minutes and leaves the unit
+# 'failed', which the host's monitor reports. Each crash also emails
+# (watcher-fatal), throttled by the notify cooldown.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=cellar27
+Group=cellar27
+WorkingDirectory=/srv/cellar27/app/watcher
+EnvironmentFile=/etc/cellar27/watcher.env
+# render.js writes the "## Today" section from local time.
+Environment=TZ=America/Chicago
+Environment=NODE_ENV=production
+Environment=HEARTBEAT_FILE=/srv/cellar27/state/heartbeat.json
+ExecStart=/usr/bin/env node src/index.js
+Restart=on-failure
+RestartSec=10
+# SIGTERM runs the watcher's own shutdown (unsubscribe, exit 0).
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Hardening. The watcher writes only the heartbeat; everything else is network.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/cellar27/state
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
