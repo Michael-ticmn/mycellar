@@ -4,6 +4,12 @@ Node service that turns `pairing_requests` / `scan_requests` rows into Claude AP
 
 ## Where it runs
 
+**Since 2026-11-17: a Linux container on the home server, as the systemd unit `cellar27-watcher`.** It starts at boot, restarts on failure, logs to the journal, and writes a heartbeat that the host checks every 15 minutes, pushing an alert when the unit is down or unhealthy. An unhealthy-but-running watcher (`ok` false on two checks in a row) therefore alerts after 15 to 30 minutes. Setup and updating are in "Running under systemd" below.
+
+### Before that: the Windows laptop (kept disabled as a rollback)
+
+The task below is **disabled**, not deleted. To roll back: `sudo systemctl disable --now cellar27-watcher` on the server, then `Enable-ScheduledTask` and `Start-ScheduledTask` for `cellar27-watcher` on the laptop. Never run both for long: claims are atomic, so nothing is processed twice, but which one answers is a coin toss.
+
 A background `node.exe` process on Windows — no PM2, no Windows service. Logs go to `watcher/watcher.out.log` and `watcher/watcher.err.log` (gitignored).
 
 Started at logon by the **`cellar27-watcher`** Scheduled Task (added 2026-09-19, after a reboot left it down for four days). The task runs [`start-watcher.ps1`](start-watcher.ps1), which skips starting if a watcher is already up, rotates the previous run's logs to `.bak` (keeping the last 10), then runs node in the foreground so the task tracks it. Mirrors the existing `vault27-watcher` task: runs as the owner's own account, interactive logon, limited privileges, no execution time limit.

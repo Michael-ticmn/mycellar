@@ -1,5 +1,5 @@
-// Liveness file for an outside monitor (on the R540, a host timer that checks
-// every few minutes). A process can be up and useless — channels dropped,
+// Liveness file for an outside monitor (on the home server, a host timer that
+// checks every 15 minutes). A process can be up and useless — channels dropped,
 // Supabase unreachable — so "the unit is active" isn't enough on its own.
 //
 // Written atomically (temp file + rename) to HEARTBEAT_FILE on every channel
