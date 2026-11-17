@@ -801,6 +801,11 @@ async function mountGuest(token) {
   // would fail — recommendations look up by id from this map instead.
   const bottleById = new Map(bottles.map((b) => [b.id, b]));
 
+  // The grid lists what's on hand, same as the owner's cellar (mountCellar).
+  // bottleById above deliberately keeps every bottle: a Tonight pour that hits
+  // quantity 0 mid-tasting, or a pick in an earlier result, must still open.
+  const onHand = bottles.filter((b) => (b.quantity ?? 0) > 0);
+
   // Tonight tab — only surfaces when the host has attached a planned
   // flight to this share link. If a plan is attached we make Tonight
   // the default tab so guests land directly on the evening's guide.
@@ -946,7 +951,8 @@ async function mountGuest(token) {
   let searchTerm = '';
 
   const repaint = () => {
-    let view = bottles.slice();
+    if (!onHand.length) { grid.innerHTML = '<p class="muted">No bottles on hand right now.</p>'; return; }
+    let view = onHand.slice();
     if (activeFilter !== 'all') {
       const allowed = new Set(STYLE_GROUPS[activeFilter] || []);
       view = view.filter((b) => allowed.has(b.style));
@@ -966,8 +972,8 @@ async function mountGuest(token) {
 
     const count = $('#guest-count');
     if (count) {
-      count.hidden = view.length === bottles.length && !searchTerm && activeFilter === 'all';
-      count.textContent = `${view.length} of ${bottles.length} bottles`;
+      count.hidden = view.length === onHand.length && !searchTerm && activeFilter === 'all';
+      count.textContent = `${view.length} of ${onHand.length} bottles`;
     }
     if (!view.length) { grid.innerHTML = '<p class="muted">No bottles match.</p>'; return; }
     grid.innerHTML = view.map(guestBottleRowHTML).join('');
@@ -3402,7 +3408,9 @@ function mountManage() {
       }
       if (intent === 'pour') {
         // Pour stays single-shot: user wants the answer right now.
-        const bottles = await listBottles();
+        // On hand only: a match to a poured-out bottle is a dead end, since
+        // its Pour button is disabled.
+        const bottles = (await listBottles()).filter((b) => (b.quantity ?? 0) > 0);
         const cellarSnapshot = bottles.map((b) => ({
           id: b.id, producer: b.producer, wine_name: b.wine_name,
           varietal: b.varietal, vintage: b.vintage, quantity: b.quantity,

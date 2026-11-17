@@ -4,7 +4,7 @@ import { hostname } from 'node:os';
 import { createClient } from '@supabase/supabase-js';
 import chokidar from 'chokidar';
 import { CONFIG } from './config.js';
-import { renderPairingRequest, renderScanRequest } from './render.js';
+import { renderPairingRequest, renderScanRequest, picksOnHand } from './render.js';
 import { getWeather } from './weather.js';
 import { parsePairingResponse, parseScanResponse } from './parse.js';
 import { invokeBridgeAgent } from './agent.js';
@@ -588,14 +588,35 @@ function isDuplicateKey(error) {
   return error?.code === '23505' || /duplicate key value/i.test(error?.message || '');
 }
 
+// The model is shown only on-hand bottles (render.js onHand), so a pick naming
+// any other id is either invented or a bottle that was already poured out when
+// the request was made. The app can't act on either. Drop that pick and keep
+// the rest of the response. Never throws: failing to check is a reason to keep
+// the picks as they are, not to lose the answer.
+async function keepOnHandPicks(requestId, recommendations) {
+  if (!recommendations?.length) return recommendations;
+  const { data: req, error } = await sb.from('pairing_requests')
+    .select('request_type, cellar_snapshot').eq('id', requestId).maybeSingle();
+  if (error || !req) {
+    log(`pairing ${requestId}: could not load the snapshot to check picks (${error?.message || 'row not found'}); keeping them`);
+    return recommendations;
+  }
+  if (PLAN_BACKED_TYPES.has(req.request_type)) return recommendations;
+  const kept = picksOnHand(recommendations, req.cellar_snapshot);
+  const dropped = recommendations.length - kept.length;
+  if (dropped) log(`pairing ${requestId}: dropped ${dropped} pick(s) not on hand in the request's snapshot`);
+  return kept;
+}
+
 async function ingestPairingResponse(path) {
   const text = await readFile(path, 'utf8');
   const parsed = parsePairingResponse(text);
   const requestId = resolveRequestId(path, 'req', parsed.frontmatter.request_id);
+  const recommendations = await keepOnHandPicks(requestId, parsed.recommendations);
 
   const { error: insErr } = await sb.from('pairing_responses').insert({
     request_id: requestId,
-    recommendations: parsed.recommendations,
+    recommendations,
     narrative: parsed.narrative,
     payload: parsed.payload,
   });

@@ -130,12 +130,36 @@ function bottleRow(b) {
   return `| ${bits.join(' | ')} |`;
 }
 
+// Poured-out bottles (quantity 0) stay in the database for history, but the
+// sommelier must only ever see what is on hand. The app filters its own
+// snapshot before sending; this is the backstop, and the only filter on the
+// guest path, whose snapshot is built unfiltered in SQL by
+// cellar27_share_create_pairing_request. Planned flights never come through
+// here: flight_plan / flight_guest render from the saved picks, so a bottle
+// poured to 0 mid-tasting stays in its plan.
+export function onHand(snapshot) {
+  return (Array.isArray(snapshot) ? snapshot : [])
+    .filter((b) => (Number(b?.quantity) || 0) > 0);
+}
+
+// Output side of the same rule: keep only picks (and alternatives) whose
+// bottle_id is on hand in the snapshot the model was shown.
+export function picksOnHand(recommendations, snapshot) {
+  const ids = new Set(onHand(snapshot).map((b) => String(b.id).toLowerCase()));
+  const isOnHand = (id) => ids.has(String(id).trim().toLowerCase());
+  return (recommendations || [])
+    .filter((r) => isOnHand(r.bottle_id))
+    .map((r) => (Array.isArray(r.alternatives)
+      ? { ...r, alternatives: r.alternatives.filter(isOnHand) }
+      : r));
+}
+
 function bottlesTable(snapshot, includeQty = true) {
   const head = includeQty
     ? '| id | producer | wine | varietal | vintage | style | qty | drink window |'
     : '| id | producer | wine | varietal | vintage | qty |';
   const sep = includeQty ? '|----|----------|------|----------|---------|-------|-----|--------------|' : '|----|----------|------|----------|---------|-----|';
-  const rows = (snapshot || [])
+  const rows = onHand(snapshot)
     .map(includeQty ? bottleRow : (b) => `| ${cell(b.id, 40)} | ${cell(b.producer)} | ${cell(b.wine_name)} | ${cell(b.varietal)} | ${b.vintage ?? ''} | ${b.quantity ?? ''} |`)
     .join('\n');
   return `${head}\n${sep}\n${rows || '_(empty)_'}`;
@@ -396,6 +420,8 @@ ${contextStr}
 \`\`\`
 
 ## Available cellar
+Every bottle below is on hand right now (qty 1 or more). Recommend only bottle_ids from this table.
+
 ${bottlesTable(row.cellar_snapshot, true)}
 
 ## Task
@@ -494,7 +520,7 @@ respond_to: ${respondToPath}
     : '## Context\n_(none)_';
 
   const cellarSection = row.intent === 'pour'
-    ? `## Cellar\n${bottlesTable(row.cellar_snapshot, false)}\n`
+    ? `## Cellar\nEvery bottle below is on hand right now (qty 1 or more). Match only to rows in this table.\n\n${bottlesTable(row.cellar_snapshot, false)}\n`
     : '';
 
   // producer / wine_name / notes on this row are whatever the owner typed.

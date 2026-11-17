@@ -34,8 +34,11 @@ export async function createRequest({ requestType, context, includeCellar = true
 
   let snapshot = [];
   if (includeCellar) {
-    const bottles = await listBottles();
-    if (!bottles.length) throw new Error('Cellar is empty — add bottles before requesting suggestions.');
+    // On hand only: the sommelier shouldn't suggest a bottle that's been
+    // poured out. Poured-out rows stay in the DB (and in the cellar's history),
+    // they just don't go to the AI. The watcher filters again as a backstop.
+    const bottles = (await listBottles()).filter((b) => (b.quantity ?? 0) > 0);
+    if (!bottles.length) throw new Error('No bottles on hand. Add bottles before requesting suggestions.');
     snapshot = snapshotForBridge(bottles);
   }
 
