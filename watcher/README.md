@@ -1,6 +1,6 @@
 # cellar27-watcher
 
-Node service that bridges Supabase Realtime ↔ a file-drop folder that Claude Code monitors.
+Node service that turns `pairing_requests` / `scan_requests` rows into Claude API calls and writes the answers back to Supabase.
 
 ## Where it runs
 
@@ -22,7 +22,7 @@ The guard matches this repo's `src\index.js` by **full path**. myvinyl and mycab
 
 Starting it by hand with `Start-Process` (below) still works and survives any terminal closing; the task's guard means a later logon won't start a second copy. Do NOT append to the logs with PowerShell `>>` — Windows PowerShell 5.1 writes UTF-16 and mangles the file.
 
-Bridge dir defaults to `~/cellar27-bridge/` (override with `BRIDGE_DIR` in `.env`).
+Don't start it from inside a Claude Code session's shell either: dotenv never overrides a variable that is already set, and Claude Code exports its own variables to the processes it starts. The watcher's own settings are prefixed `CELLAR27_` for that reason. `ANTHROPIC_API_KEY` keeps its standard name, so the launching environment must not export one.
 
 ### Find / restart it
 
@@ -54,12 +54,14 @@ See [`BUILD_SPEC.md` §2](../BUILD_SPEC.md) for the architecture overview.
 ## What it does
 
 - Subscribes to `pairing_requests` and `scan_requests` rows where `status='pending'`
-- Atomically claims each row (`status='picked_up'`), then renders a markdown file into `~/cellar27-bridge/requests/`
-- For scan requests, downloads the label image from Supabase Storage to `~/cellar27-bridge/images/<uuid>.<ext>` and references that local path in the markdown
-- Watches `~/cellar27-bridge/responses/` for files Claude Code writes back; parses them, inserts into `pairing_responses` / `scan_responses`, marks the request `completed`, archives both files into `~/cellar27-bridge/processed/`
+- Atomically claims each row (`status='picked_up'`), then renders the request into a markdown prompt
+- For scan requests, downloads the label photos from Supabase Storage (owner-scoped, see Layer 10 in [`docs/SECURITY.md`](../docs/SECURITY.md)) and attaches them to the call as images. They never touch this disk.
+- Before each call, `cellar27_try_record_spawn(MAX_CLAUDE_CALLS_PER_DAY)` enforces the atomic global daily ceiling; at cap the request is marked `error`
+- Calls the Claude Messages API once per request, parses the reply, inserts into `pairing_responses` / `scan_responses` and marks the request `completed`. On failure the request is marked `error` with a message the app shows.
 - Every 2 min calls the Postgres function `cellar27_sweep_stale_claims` to recover rows stuck in `picked_up` (resets to `pending` for up to 2 retries, then `error`)
-- Before each `claude --print` spawn, calls `cellar27_try_record_spawn(MAX_CLAUDE_CALLS_PER_DAY)` — atomic global daily ceiling; refuses to spawn at cap and marks the request `error`
 - On startup, sweeps any rows left `pending` while the watcher was down, and runs the stale-claim sweep once
+
+Only outbound connections: Supabase (REST, Realtime, Storage), `api.anthropic.com`, `api.open-meteo.com` (weather, optional) and the SMTP host (alerts, optional). It listens on no port.
 
 ## Setup
 
@@ -68,57 +70,22 @@ cd watcher
 npm install
 
 cp .env.example .env
-# fill in SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
+# fill in SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY and ANTHROPIC_API_KEY
 # (Service role key — Settings → API in Supabase. NEVER ship to the frontend.)
-
-# Optional override; defaults to ~/cellar27-bridge
-# On Windows: BRIDGE_DIR=C:/Users/<your-username>/cellar27-bridge
 
 npm start
 ```
 
-Folders under `BRIDGE_DIR` (`requests/`, `responses/`, `processed/`, `images/`) are auto-created at startup.
+## Claude API calls
 
-## Reasoning agent — auto-spawned by default
+Until 2026-11-17 the watcher spawned `claude --print` per request and passed the prompt and the answer through files (`~/cellar27-bridge/`). It now makes one Messages API call per request from [`src/claude.js`](src/claude.js), paid from the Max plan's monthly API credits ($100, which cover the API but not Claude Code; unused credit expires each billing cycle; when it runs out, calls fail until the next cycle and the owner gets an email).
 
-By default (`AUTO_INVOKE=true` in `.env`), the watcher spawns a fresh `claude --print` session per request and pipes the prompt over stdin. The agent reads the request file, writes the response file at the path in `respond_to`, exits. No long-running session, no manual nudging. See [`src/agent.js`](src/agent.js).
-
-Flags used: `--print` (non-interactive), **`--tools Read,Write`** (see below), `--permission-mode acceptEdits` (auto-accept the response-file write), `--no-session-persistence` (don't accumulate session history). `cwd` is `BRIDGE_DIR`. `claude` resolves via PATH (override with `CLAUDE_BIN` in `.env`). A native `claude.exe` is spawned directly. An npm `claude.cmd` shim goes through cmd.exe instead, because Node 24 refuses to spawn `.cmd` files directly (`EINVAL`), and that path logs a harmless DEP0190 warning to `watcher.err.log`.
-
-Note: do NOT pass `--bare`. It disables keychain reads, so the spawned `claude` would have no auth and fail with "Please run /login". Without `--bare`, `claude` uses the host user's existing OAuth session.
-
-**`--tools Read,Write` is a security boundary, not a tidiness measure.** The request file contains free text typed by whoever made the request — including an anonymous share-link guest, since `cellar27_share_create_pairing_request` is granted to `anon`. `src/render.js` delimits and neutralizes that text, but prompt injection isn't solved by escaping alone, so the agent also gets no other tools: no Bash, no WebFetch/WebSearch, no MCP. No command execution, no network egress. Combined with `cwd` = `BRIDGE_DIR` (reads outside it prompt, and `--print` auto-denies prompts), `.env` is out of reach even though this process holds those secrets.
-
-Note it must be `--tools`, which limits the available set — **not** `--allowedTools`, which only pre-approves tools and would leave Bash available. Before widening this, read Layer 9 in [`docs/SECURITY.md`](../docs/SECURITY.md); it includes a one-line regression check.
-
-### Concurrency and hung agents
-
-`MAX_CONCURRENT_AGENTS` (default 3) caps how many `claude` processes run at once; the rest queue FIFO. Five in-flight requests per user across a few users is otherwise a lot of simultaneous sessions on one laptop.
-
-A process that hangs is killed at `TIMEOUT_MINUTES + 2`, deliberately just after the DB-side stale-claim sweep gives up, so the row is recovered first and the process follows. Before this, the sweep freed the row but left the process alive indefinitely, holding memory and an API session.
-
-The queue is memory-only. If the watcher dies with items in it, those rows stay `picked_up` and the stale-claim sweep returns them to `pending` on restart — the recovery path that already exists.
-
-### Manual fallback
-
-Set `AUTO_INVOKE=false` if you'd rather drive a long-running interactive session yourself (useful for debugging request/response formatting). Then in a separate terminal:
-
-```bash
-cd <BRIDGE_DIR>
-claude
-```
-
-Paste this prompt verbatim:
-
-> You are the cellar27 reasoning agent. New request files appear in `requests/` named `req-<uuid>.md` (pairing/flight/drink-now) or `scan-<uuid>.md` (label scan). For each new file: read it, follow the Task and Response format sections, write the response file at the path in the `respond_to` frontmatter field. Do not move or delete the request file — the watcher handles archival. If you can't fulfill a request, write a response file that explains why in the Narrative section and uses an empty Recommendations list (or null Extracted/Match for scan).
-
-You'll need to nudge it ("check requests/ for new files") each time something arrives.
-
-In both modes the watcher detects the response file via chokidar, ingests it, and archives both files into `processed/`.
-
-## Bridge contract
-
-See [BUILD_SPEC.md §2.2 / §2.2b](../BUILD_SPEC.md) for the exact markdown formats. The renderer in [`src/render.js`](src/render.js) produces them; the parser in [`src/parse.js`](src/parse.js) tolerates minor formatting drift (extra whitespace, optional fields).
+- **Model:** `claude-opus-5-5` at `medium` effort, overridable with `CELLAR27_MODEL` / `CELLAR27_EFFORT`. Adaptive thinking is always on for this model. If a safety classifier declines a request, the API re-runs it on its chosen fallback model inside the same call (`fallbacks: "default"`).
+- **No tools.** The request carries no `tools`, so the model can only return text. This replaced the `--tools Read,Write` boundary; see Layer 9 in [`docs/SECURITY.md`](../docs/SECURITY.md) before adding any.
+- **Reply format:** the same markdown sections the file bridge used, now as the reply text. [`src/render.js`](src/render.js) describes them per request type; [`src/parse.js`](src/parse.js) reads them and tolerates minor drift. A reply wrapped in one outer code fence is unwrapped first.
+- **Cost:** each call logs model, stop reason, input/output tokens and an estimated cost (Opus 5.5 at $4 / $20 per million tokens). Thinking is billed as output.
+- **Timeouts and retries:** the SDK retries network errors, 429 and 5xx twice. Each attempt's timeout is sized so a call and its retries end inside `TIMEOUT_MINUTES`, before the stale-claim sweep would hand the row to a second call.
+- **Concurrency:** `MAX_CONCURRENT_AGENTS` (default 3) caps simultaneous calls; the rest queue FIFO. The queue is memory-only: if the watcher dies with items in it, those rows stay `picked_up` and the stale-claim sweep returns them to `pending` on restart.
 
 ## Layout
 
@@ -128,11 +95,14 @@ watcher/
 ├── .env.example
 ├── .env             (gitignored)
 └── src/
-    ├── index.js     main loop: subscribe, watch, timeout, lifecycle
-    ├── config.js    loads env, derives bridge dir layout
-    ├── render.js    Supabase row → markdown request file
-    ├── parse.js     markdown response file → Supabase row
-    └── agent.js     spawns `claude --print` per request
+    ├── index.js     main loop: subscribe, claim, call, record, sweep, lifecycle
+    ├── config.js    loads and validates env
+    ├── render.js    Supabase row → markdown prompt
+    ├── claude.js    one Messages API call per request; failure classification
+    ├── parse.js     markdown reply → Supabase row
+    ├── policy.js    allowlist, watcher-side rate limit, storage path ownership
+    ├── weather.js   current conditions for the prompt (Open-Meteo)
+    └── notify.js    SMTP alerts
 ```
 
 ## Troubleshooting
@@ -140,7 +110,8 @@ watcher/
 - **"Missing required env var"** at startup → fill in `.env`
 - **Realtime channel stuck on "CONNECTING"** → confirm Realtime is enabled on the relevant tables in Supabase (Database → Replication → enable `pairing_requests`, `scan_requests`, `pairing_responses`, `scan_responses` for the `supabase_realtime` publication)
 - **Storage download fails** → the service role key bypasses RLS, but the bucket must exist (`bottle-labels`, created by `supabase/migrations/0001_init.sql`)
-- **Response files aren't being picked up** → check filename prefix. `req-<uuid>.md` for pairing, `scan-<uuid>.md` for scan. Anything else is ignored.
+- **Every request errors with "The sommelier is unavailable right now."** → the API rejected the call in a way retrying won't fix, and a `cellar27 — Claude API calls are failing` email went out. Usual causes: the month's credits are used up (Console → Billing → Promotional credits), `ANTHROPIC_API_KEY` is wrong or revoked, or `CELLAR27_MODEL` names a model the org can't use. The full error is in the watcher log.
+- **"The sommelier is busy right now." / "Couldn't reach the sommelier."** → 429/5xx or a network failure that outlasted the SDK's two retries. Transient; no email.
 - **Request stuck in `picked_up`** → `cellar27_sweep_stale_claims` (called every 2 min) resets it to `pending` for up to 2 retries, then sets `error`. Check `error_message` and `retry_count`. `claimed_by` should be the host's hostname; if NULL on a fresh row, the watcher is running pre-P0 code — restart it (see "Where it runs" above).
 - **Insert from phone fails with "row violates row-level security policy"** → user_id isn't in `cellar27_allowed_users`, or `cellar27_check_rate_limit` returned false (default 100 requests/hour as of v0.8). Seed the allowlist via service_role.
 - **Request errors with "Daily AI capacity reached"** → `MAX_CLAUDE_CALLS_PER_DAY` ceiling hit (default 250). See `cellar27_watcher_metrics` for today's count; bump the env var and restart if needed.
@@ -172,8 +143,9 @@ The emails are informational — no inline approval.
 | --- | --- | --- |
 | Policy denial | `policy:<user_id>` | A user hit a watcher-side limit. Body names the limit and the SQL/env tweak to grant more. |
 | Daily ceiling | `daily-ceiling` | `MAX_CLAUDE_CALLS_PER_DAY` reached. Resets midnight UTC. |
-| Fatal error | `watcher-fatal:<reason>` | The process is exiting on an uncaught error / rejection / chokidar failure. |
+| Fatal error | `watcher-fatal:<reason>` | The process is exiting on an uncaught error or rejection. |
 | **pickUp failure** | `pickup-failure` | **The watcher is running but failing the requests it claims.** |
+| API failure | `claude-api` | A Claude API call failed in a way retrying won't fix: credits used up, bad key, unavailable model. |
 
 That last one exists because it is the failure with no other symptom. Both sweeps catch per-row throws so one bad row cannot abort the batch, and the realtime path only writes the message onto the row — so a watcher failing *every* request still has a live process, `SUBSCRIBED` channels and a quiet `watcher.out.log`. Without this email the first sign is the app refusing new work, once the stranded rows fill the 5-in-flight cap. That is exactly how a startup-sweep bug went unnoticed for days in August 2026.
 

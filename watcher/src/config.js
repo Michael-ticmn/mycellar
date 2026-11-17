@@ -1,8 +1,11 @@
 import 'dotenv/config';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 
-const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
+// ANTHROPIC_API_KEY belongs in watcher/.env and nowhere else. In particular not
+// in a Windows user or system environment variable: Claude Code reads that
+// variable too, and on a machine where the key's org holds only the Max plan's
+// API credits (which don't cover Claude Code) the owner's own sessions would
+// start failing with "Credit balance too low".
+const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'ANTHROPIC_API_KEY'];
 for (const k of required) {
   if (!process.env[k]) {
     console.error(`Missing required env var: ${k}. See .env.example.`);
@@ -29,17 +32,24 @@ export function intEnv(name, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER 
   return n;
 }
 
-const bridgeDir = process.env.BRIDGE_DIR || join(homedir(), 'cellar27-bridge');
+// Prefixed on purpose. Claude Code exports CLAUDE_EFFORT to the processes it
+// starts, so an unprefixed name would let a watcher launched from a Claude
+// session silently inherit that session's effort; and dotenv never overrides a
+// variable that is already set, so .env couldn't correct it.
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const effort = (process.env.CELLAR27_EFFORT || 'medium').toLowerCase();
+if (!EFFORTS.includes(effort)) {
+  console.error(`Invalid CELLAR27_EFFORT=${JSON.stringify(process.env.CELLAR27_EFFORT)}: expected one of ${EFFORTS.join(', ')}. See .env.example.`);
+  process.exit(1);
+}
 
 export const CONFIG = {
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  bridgeDir,
-  dirs: {
-    requests:  join(bridgeDir, 'requests'),
-    responses: join(bridgeDir, 'responses'),
-    processed: join(bridgeDir, 'processed'),
-    images:    join(bridgeDir, 'images'),
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    model: process.env.CELLAR27_MODEL || 'claude-opus-5-5',
+    effort,
   },
   timeoutMinutes: intEnv('TIMEOUT_MINUTES', 10, { min: 1, max: 24 * 60 }),
   maxClaudeCallsPerDay: intEnv('MAX_CLAUDE_CALLS_PER_DAY', 250, { min: 1, max: 100_000 }),
@@ -55,8 +65,6 @@ export const CONFIG = {
     cooldownMs: intEnv('NOTIFY_COOLDOWN_MS', 30 * 60_000, { min: 0 }),
   },
   storageBucket: 'bottle-labels',
-  autoInvoke: (process.env.AUTO_INVOKE || 'true').toLowerCase() !== 'false',
-  claudeBin: process.env.CLAUDE_BIN || 'claude',
   // Comma-separated user UUIDs allowed to consume bridge compute.
   // Empty/unset = open mode (every signed-in user allowed) — only safe
   // if Supabase "Allow new users to sign up" is OFF.

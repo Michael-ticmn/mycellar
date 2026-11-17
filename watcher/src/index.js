@@ -1,13 +1,11 @@
-import { mkdir, writeFile, readFile, rename, unlink } from 'node:fs/promises';
-import { join, basename, extname } from 'node:path';
+import { basename, extname } from 'node:path';
 import { hostname } from 'node:os';
 import { createClient } from '@supabase/supabase-js';
-import chokidar from 'chokidar';
 import { CONFIG } from './config.js';
 import { renderPairingRequest, renderScanRequest, picksOnHand } from './render.js';
 import { getWeather } from './weather.js';
 import { parsePairingResponse, parseScanResponse } from './parse.js';
-import { invokeBridgeAgent } from './agent.js';
+import { askClaude, describeFailure } from './claude.js';
 import { denyReason, isOwnedStoragePath } from './policy.js';
 import { notify } from './notify.js';
 
@@ -135,7 +133,6 @@ const sb = createClient(CONFIG.supabaseUrl, CONFIG.supabaseServiceKey, {
 //   replaced, so there is exactly one reconnect chain per channel.
 const channels = new Map();
 const reconnect = new Map();
-let responsesWatcher = null;
 let sweepTimer = null;
 
 // Channel definitions — name → table. Used by both initial subscribe and
@@ -156,23 +153,15 @@ const PLAN_CONTEXT_FIELDS = [
   'narrative', 'picks', 'food', 'food_hint', 'notes_hint',
 ];
 
-await ensureDirs();
 await sweepStaleRequests(); // catch up on anything queued while we were down
 await sweepStaleClaims();   // recover any picked_up rows abandoned by a prior crash
 subscribePairingRequests();
 subscribeScanRequests();
-watchResponses();
 sweepTimer = setInterval(sweepStaleClaims, 120_000);
 
-log('cellar27-watcher running. Bridge dir:', CONFIG.bridgeDir);
+log(`cellar27-watcher running. Model: ${CONFIG.anthropic.model}, effort ${CONFIG.anthropic.effort}.`);
 
 // ───────────────────────── setup ─────────────────────────
-
-async function ensureDirs() {
-  for (const dir of Object.values(CONFIG.dirs)) {
-    await mkdir(dir, { recursive: true });
-  }
-}
 
 // On startup (and on realtime reconnect), pull anything stuck in 'pending'
 // that we missed. Realtime doesn't replay missed INSERTs, so any row that
@@ -354,10 +343,10 @@ async function hydratePlanContext(row) {
 // isRetry marks a row the stale-claim sweep sent back to 'pending'. It's the
 // same user request being processed again, so it must not consume a second
 // rate-limit slot. (It does still consume a daily-ceiling slot, and should:
-// that counter measures actual claude spawns, and a retry is a real one.)
+// that counter measures actual Claude calls, and a retry is a real one.)
 async function pickUp(table, row, { isRetry = false } = {}) {
   // Policy gate: allowlist + rate limit. Reject pre-claim so the request shows
-  // status=error to the client immediately, without spawning claude.
+  // status=error to the client immediately, without calling Claude.
   const denied = denyReason(row.user_id, {
     // Guest-originated rows carry share_link_id and are already bounded by the
     // link's ai_quota and the per-link pacing guard; keep the watcher backstop
@@ -405,26 +394,20 @@ async function pickUp(table, row, { isRetry = false } = {}) {
   // configured). Awaited up front so it can flow into either render path.
   const weather = await getWeather();
 
-  let reqPath;
+  // content: the single user turn sent to the API. Label photos first, each
+  // after a line naming it, then the rendered request.
+  let content;
   if (table === 'pairing_requests') {
-    const fileName = `req-${claimed.id}.md`;
-    const respondTo = join(CONFIG.dirs.responses, fileName);
-    const body = renderPairingRequest(await hydratePlanContext(claimed), respondTo, weather);
-    reqPath = join(CONFIG.dirs.requests, fileName);
-    await writeFile(reqPath, body, 'utf8');
-    log(`wrote pairing request ${reqPath}`);
+    const prompt = renderPairingRequest(await hydratePlanContext(claimed), weather);
+    content = [{ type: 'text', text: prompt }];
+    log(`rendered pairing ${claimed.id} (${claimed.request_type})`);
   } else if (table === 'scan_requests') {
-    const fileName = `scan-${claimed.id}.md`;
-    const respondTo = join(CONFIG.dirs.responses, fileName);
-
-    // Download all images (front, back, etc) to local paths the agent can read.
-    // Parallelize: a 2-image scan halves wall-clock latency vs sequential awaits.
     const paths = Array.isArray(claimed.image_paths) ? claimed.image_paths : [];
     // image_paths is client-written: submitScanRequest passes through whatever
     // it's handed, and the RLS policy on scan_requests only constrains user_id.
     // We fetch these with the service key, which is not subject to the bucket's
     // per-user folder policies — so without this check a request naming
-    // "<someone-else>/scan-<uuid>-front.jpg" would have the agent read and
+    // "<someone-else>/scan-<uuid>-front.jpg" would have the model read and
     // describe a stranger's label photo. Object paths aren't secret either: a
     // guest-label signed URL embeds one in full.
     //
@@ -437,18 +420,25 @@ async function pickUp(table, row, { isRetry = false } = {}) {
       await markError(table, claimed.id, 'Image path is not yours.');
       return;
     }
+    const unsupported = paths.filter((p) => !IMAGE_MEDIA_TYPES[extname(p).toLowerCase() || '.jpg']);
+    if (unsupported.length) {
+      err(`scan ${claimed.id}: unsupported image type(s): ${unsupported.join(', ')}`);
+      await markError(table, claimed.id, 'Unsupported image type.');
+      return;
+    }
+
+    // Straight from Storage into the request: the photos never touch this disk.
+    // Parallel, so a two-photo scan doesn't pay for two sequential downloads.
     const images = await Promise.all(paths.map(async (storagePath, i) => {
-      const ext = extname(storagePath) || '.jpg';
+      const ext = extname(storagePath).toLowerCase() || '.jpg';
       // Convention: paths are uploaded as ".../scan-<uuid>-<label>.jpg".
       // Extract the label from the basename if present, else fall back to index.
-      const baseLabel = basename(storagePath, ext).split('-').pop();
+      const baseLabel = basename(storagePath, extname(storagePath)).split('-').pop();
       const label = ['front', 'back', 'side', 'top'].includes(baseLabel) ? baseLabel : `image${i + 1}`;
-      const localImage = join(CONFIG.dirs.images, `${claimed.id}-${label}${ext}`);
-      await downloadImage(storagePath, localImage);
-      return { label, path: localImage };
+      return { label, mediaType: IMAGE_MEDIA_TYPES[ext], data: await downloadImage(storagePath) };
     }));
 
-    // For 'enrich' intent, optionally fetch the bottle row to give the agent context.
+    // For 'enrich' intent, optionally fetch the bottle row to give the model context.
     let existingBottle = null;
     if (claimed.intent === 'enrich' && claimed.context?.bottle_id) {
       // user_id predicate for the same reason as hydratePlanContext: the
@@ -463,260 +453,233 @@ async function pickUp(table, row, { isRetry = false } = {}) {
       existingBottle = data;
     }
 
-    const body = renderScanRequest(claimed, images, respondTo, existingBottle, weather);
-    reqPath = join(CONFIG.dirs.requests, fileName);
-    await writeFile(reqPath, body, 'utf8');
-    log(`wrote scan request ${reqPath} (intent=${claimed.intent}, images=${images.length})`);
+    const prompt = renderScanRequest(claimed, images.map((img) => img.label), existingBottle, weather);
+    content = [
+      ...images.flatMap((img) => [
+        { type: 'text', text: `Label photo: ${img.label}` },
+        { type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } },
+      ]),
+      { type: 'text', text: prompt },
+    ];
+    log(`rendered scan ${claimed.id} (intent=${claimed.intent}, images=${images.length})`);
+  } else {
+    return;
   }
 
-  if (reqPath) {
-    // Global daily ceiling: refuse to spawn if we're at cap. Atomic upsert
-    // in Postgres (cellar27_try_record_spawn) so two watchers / parallel
-    // requests can't race past the limit.
-    const { data: allowed, error: ceilErr } = await sb.rpc('cellar27_try_record_spawn', {
-      p_max: CONFIG.maxClaudeCallsPerDay,
-    });
-    if (ceilErr) {
-      err('try_record_spawn:', ceilErr);
-      // Fail closed: if we can't talk to Postgres, don't spawn either.
-      await sb.from(table).update({
-        status: 'error',
-        error_message: `ceiling check failed: ${ceilErr.message}`,
-      }).eq('id', claimed.id);
-      try { await unlink(reqPath); } catch { /* best-effort */ }
-      return;
-    }
-    if (allowed !== true) {
-      log(`DAILY CEILING REACHED (${CONFIG.maxClaudeCallsPerDay}); refusing to spawn for ${table}.${claimed.id}`);
-      await sb.from(table).update({
-        status: 'error',
-        error_message: `Daily AI capacity reached (${CONFIG.maxClaudeCallsPerDay}). Resets at midnight UTC.`,
-      }).eq('id', claimed.id);
-      notify({
-        key: 'daily-ceiling',
-        subject: `cellar27 — daily Claude ceiling reached (${CONFIG.maxClaudeCallsPerDay})`,
-        body: [
-          `cellar27 has hit the global daily Claude-call ceiling.`,
-          ``,
-          `Cap:    ${CONFIG.maxClaudeCallsPerDay}`,
-          `Time:   ${new Date().toISOString()}`,
-          `Table:  ${table}`,
-          `User:   ${claimed.user_id}`,
-          ``,
-          `Resets at UTC midnight. To allow more today:`,
-          `  1) Bump MAX_CLAUDE_CALLS_PER_DAY in watcher/.env`,
-          `  2) update cellar27_watcher_metrics set spawn_count = 0`,
-          `       where metric_date = current_date;`,
-          `  3) Restart the watcher.`,
-          ``,
-          `If this looks unexpected, check cellar27_audit_log (if enabled)`,
-          `or scan logs for a runaway loop. See docs/SECURITY.md.`,
-        ].join('\n'),
-      }).catch((e) => err('notify ceiling:', e));
-      try { await unlink(reqPath); } catch { /* best-effort */ }
-      return;
-    }
-    invokeBridgeAgent(reqPath);
+  // Global daily ceiling: refuse to call the API if we're at cap. Atomic upsert
+  // in Postgres (cellar27_try_record_spawn, named for the old per-request
+  // process) so two watchers / parallel requests can't race past the limit.
+  const { data: allowed, error: ceilErr } = await sb.rpc('cellar27_try_record_spawn', {
+    p_max: CONFIG.maxClaudeCallsPerDay,
+  });
+  if (ceilErr) {
+    err('try_record_spawn:', ceilErr);
+    // Fail closed: if we can't talk to Postgres, don't call either.
+    await sb.from(table).update({
+      status: 'error',
+      error_message: `ceiling check failed: ${ceilErr.message}`,
+    }).eq('id', claimed.id);
+    return;
   }
+  if (allowed !== true) {
+    log(`DAILY CEILING REACHED (${CONFIG.maxClaudeCallsPerDay}); refusing to call for ${table}.${claimed.id}`);
+    await sb.from(table).update({
+      status: 'error',
+      error_message: `Daily AI capacity reached (${CONFIG.maxClaudeCallsPerDay}). Resets at midnight UTC.`,
+    }).eq('id', claimed.id);
+    notify({
+      key: 'daily-ceiling',
+      subject: `cellar27 — daily Claude ceiling reached (${CONFIG.maxClaudeCallsPerDay})`,
+      body: [
+        `cellar27 has hit the global daily Claude-call ceiling.`,
+        ``,
+        `Cap:    ${CONFIG.maxClaudeCallsPerDay}`,
+        `Time:   ${new Date().toISOString()}`,
+        `Table:  ${table}`,
+        `User:   ${claimed.user_id}`,
+        ``,
+        `Resets at UTC midnight. To allow more today:`,
+        `  1) Bump MAX_CLAUDE_CALLS_PER_DAY in watcher/.env`,
+        `  2) update cellar27_watcher_metrics set spawn_count = 0`,
+        `       where metric_date = current_date;`,
+        `  3) Restart the watcher.`,
+        ``,
+        `If this looks unexpected, check cellar27_audit_log (if enabled)`,
+        `or scan logs for a runaway loop. See docs/SECURITY.md.`,
+      ].join('\n'),
+    }).catch((e) => err('notify ceiling:', e));
+    return;
+  }
+
+  // Not awaited. The sweeps call pickUp() row by row and a call takes 20-60 s;
+  // claude.js queues and caps concurrency, and answer() records the outcome on
+  // the row whichever way it goes.
+  answer(table, claimed, content);
 }
 
-async function downloadImage(storagePath, localPath) {
+// The label photos are uploaded by the app as JPEG. Anything else is refused
+// up front rather than sent with a guessed media type.
+const IMAGE_MEDIA_TYPES = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif',
+};
+
+async function downloadImage(storagePath) {
   const { data, error } = await sb.storage.from(CONFIG.storageBucket).download(storagePath);
   if (error) throw new Error(`storage download failed: ${error.message}`);
-  const buf = Buffer.from(await data.arrayBuffer());
-  await writeFile(localPath, buf);
+  return Buffer.from(await data.arrayBuffer()).toString('base64');
 }
 
-// ───────────────────────── outbound (file → Supabase) ─────────────────────────
+// ───────────────────────── answer (API → Supabase) ─────────────────────────
 
-function watchResponses() {
-  const watcher = chokidar.watch(CONFIG.dirs.responses, {
-    ignoreInitial: false,
-    awaitWriteFinish: { stabilityThreshold: 800, pollInterval: 100 },
-  });
-  watcher.on('add', async (path) => {
-    const name = basename(path);
-    try {
-      if (name.startsWith('req-') && name.endsWith('.md'))   await ingestPairingResponse(path);
-      else if (name.startsWith('scan-') && name.endsWith('.md')) await ingestScanResponse(path);
-      else log(`ignoring unrecognized file in responses/: ${name}`);
-    } catch (e) {
-      err(`ingest ${name}:`, e);
-    }
-  });
-  watcher.on('error', (e) => {
-    fatalAndExit('chokidar', e?.stack || e?.message || String(e));
-  });
-  responsesWatcher = watcher;
-}
-
-// The response file is written by the agent, so its frontmatter is agent
-// output — not a trusted identifier. The filename, by contrast, is ours: we
-// created it as `<prefix>-<claimed.id>.md` and told the agent to write there.
-// Requiring them to match means a hallucinated (or injected) request_id can't
-// attach a response to somebody else's request, or archive the wrong file.
-function requestIdFromFilename(path, prefix) {
-  const m = basename(path).match(
-    new RegExp(`^${prefix}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.md$`, 'i'));
-  return m ? m[1].toLowerCase() : null;
-}
-
-function resolveRequestId(path, prefix, frontmatterId) {
-  const fromName = requestIdFromFilename(path, prefix);
-  if (!fromName) throw new Error(`unparseable response filename: ${basename(path)}`);
-  const claimed = String(frontmatterId || '').trim().toLowerCase();
-  if (claimed && claimed !== fromName) {
-    throw new Error(
-      `request_id mismatch in ${basename(path)}: frontmatter says ${claimed}, filename says ${fromName}`);
+// The answer is bound to its request by construction: this function holds the
+// claimed row, so nothing the model writes can attach it to another request.
+// (The file bridge needed request_id-vs-filename checks for that; gone with it.)
+async function answer(table, claimed, content) {
+  try {
+    const text = await askClaude(claimed.id, content);
+    if (table === 'pairing_requests') await completePairing(claimed, text);
+    else await completeScan(claimed, text);
+  } catch (e) {
+    const { userMessage, ownerShouldKnow } = describeFailure(e);
+    err(`answer ${table}.${claimed.id}:`, e?.message || e);
+    // Nothing awaits answer(), so anything thrown from here would be an
+    // unhandled rejection, which is fatal by design (see fatalAndExit).
+    try { await markError(table, claimed.id, userMessage); }
+    catch (me) { err(`markError ${table}.${claimed.id}:`, me?.message || me); }
+    if (ownerShouldKnow && !isNetworkError(e)) notifyApiFailure(table, claimed.id, e);
   }
-  return fromName;
+}
+
+// A failure the user can't fix by trying again. Same shape and cooldown as the
+// other alerts; the likeliest cause, once this is running for a while, is the
+// month's credits running out.
+function notifyApiFailure(table, id, e) {
+  notify({
+    key: 'claude-api',
+    subject: 'cellar27 — Claude API calls are failing',
+    body: [
+      `A request reached the Claude API and failed in a way retrying won't fix.`,
+      `The user was told "The sommelier is unavailable right now."`,
+      ``,
+      `Time:    ${new Date().toISOString()}`,
+      `Host:    ${HOST}`,
+      `Request: ${table}.${id}`,
+      `Error:   ${e?.constructor?.name || 'Error'}${e?.status ? ` (HTTP ${e.status})` : ''}`,
+      `  ${String(e?.message || e).slice(0, 400)}`,
+      ``,
+      `Usual causes:`,
+      `  - The month's API credits are used up ("credit balance is too low").`,
+      `    See Promotional credits on the Console's Billing page. They refresh`,
+      `    with the Max plan's billing cycle.`,
+      `  - ANTHROPIC_API_KEY in watcher/.env is wrong or was revoked.`,
+      `  - CELLAR27_MODEL names a model this org can't use.`,
+      `  - Anything else: watcher log, with the full error.`,
+      ``,
+      `Further emails on this are suppressed for the notify cooldown window.`,
+    ].join('\n'),
+  }).catch((ne) => err('notify api failure:', ne));
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Both response tables have a unique index on request_id. Ingest is three steps
-// — insert, mark completed, archive — and only the first is guarded by that
-// index. If the insert lands and a later step fails (a network blip is enough,
-// and this runs on a laptop that sleeps), nothing archives; chokidar runs with
-// ignoreInitial:false, so the leftover file is re-read on the next start, dies
-// on 23505, and never archives. That repeats on every restart while the request
-// sits in 'picked_up' and the sweep spends two more agent runs on it.
-//
-// A duplicate key here means the response is already stored, which is the
-// outcome we wanted. Log it and carry on to the two idempotent steps.
+// Both response tables have a unique index on request_id. Completion is two
+// steps, insert then mark completed, and only the first is guarded by that
+// index. If the insert lands and the update fails, the row stays 'picked_up',
+// the stale-claim sweep retries it, and the second insert hits the index. A
+// duplicate key means the response is already stored, which is the outcome we
+// wanted: log it and carry on to the idempotent update.
 function isDuplicateKey(error) {
   return error?.code === '23505' || /duplicate key value/i.test(error?.message || '');
 }
 
-// The model is shown only on-hand bottles (render.js onHand), so a pick naming
-// any other id is either invented or a bottle that was already poured out when
-// the request was made. The app can't act on either. Drop that pick and keep
-// the rest of the response. Never throws: failing to check is a reason to keep
-// the picks as they are, not to lose the answer.
-async function keepOnHandPicks(requestId, recommendations) {
-  if (!recommendations?.length) return recommendations;
-  const { data: req, error } = await sb.from('pairing_requests')
-    .select('request_type, cellar_snapshot').eq('id', requestId).maybeSingle();
-  if (error || !req) {
-    log(`pairing ${requestId}: could not load the snapshot to check picks (${error?.message || 'row not found'}); keeping them`);
-    return recommendations;
-  }
-  if (PLAN_BACKED_TYPES.has(req.request_type)) return recommendations;
-  const kept = picksOnHand(recommendations, req.cellar_snapshot);
-  const dropped = recommendations.length - kept.length;
-  if (dropped) log(`pairing ${requestId}: dropped ${dropped} pick(s) not on hand in the request's snapshot`);
-  return kept;
-}
-
-async function ingestPairingResponse(path) {
-  const text = await readFile(path, 'utf8');
+async function completePairing(claimed, text) {
   const parsed = parsePairingResponse(text);
-  const requestId = resolveRequestId(path, 'req', parsed.frontmatter.request_id);
-  const recommendations = await keepOnHandPicks(requestId, parsed.recommendations);
+
+  // The model is shown only on-hand bottles (render.js onHand), so a pick naming
+  // any other id is either invented or a bottle already poured out when the
+  // request was made. The app can't act on either; drop that pick and keep the
+  // rest. Planned flights have no picks here: theirs are saved on the plan.
+  let recommendations = parsed.recommendations;
+  if (!PLAN_BACKED_TYPES.has(claimed.request_type)) {
+    recommendations = picksOnHand(recommendations, claimed.cellar_snapshot);
+    const dropped = parsed.recommendations.length - recommendations.length;
+    if (dropped) log(`pairing ${claimed.id}: dropped ${dropped} pick(s) not on hand in the request's snapshot`);
+  }
 
   const { error: insErr } = await sb.from('pairing_responses').insert({
-    request_id: requestId,
+    request_id: claimed.id,
     recommendations,
     narrative: parsed.narrative,
     payload: parsed.payload,
   });
   if (insErr && !isDuplicateKey(insErr)) throw insErr;
-  if (insErr) log(`pairing ${requestId}: response already stored; finishing ingest`);
+  if (insErr) log(`pairing ${claimed.id}: response already stored; finishing`);
 
   const { error: updErr } = await sb.from('pairing_requests')
     .update({ status: 'completed' })
-    .eq('id', requestId);
+    .eq('id', claimed.id);
   if (updErr) throw updErr;
-
-  await archive(`req-${requestId}.md`, path);
-  log(`completed pairing ${requestId}`);
+  log(`completed pairing ${claimed.id}`);
 }
 
 // Returns the id if it is a real bottle belonging to whoever made this scan
 // request, else null. Never throws: a bad match is a reason to drop one field,
 // not to lose the response.
-async function verifyMatchedBottle(candidate, requestId) {
+async function verifyMatchedBottle(candidate, claimed) {
   if (candidate == null) return null;
   const id = String(candidate).trim();
   if (!UUID_RE.test(id)) {
-    log(`scan ${requestId}: matched_bottle_id is not a uuid; dropping it`);
+    log(`scan ${claimed.id}: matched_bottle_id is not a uuid; dropping it`);
     return null;
   }
-  const { data: req } = await sb.from('scan_requests')
-    .select('user_id').eq('id', requestId).maybeSingle();
-  if (!req) return null;
   const { data: bottle, error } = await sb.from('bottles')
-    .select('id').eq('id', id).eq('user_id', req.user_id).maybeSingle();
+    .select('id').eq('id', id).eq('user_id', claimed.user_id).maybeSingle();
   if (error) {
-    log(`scan ${requestId}: could not verify matched_bottle_id (${error.message}); dropping it`);
+    log(`scan ${claimed.id}: could not verify matched_bottle_id (${error.message}); dropping it`);
     return null;
   }
   if (!bottle) {
-    log(`scan ${requestId}: matched_bottle_id ${id} is not a bottle of this user; dropping it`);
+    log(`scan ${claimed.id}: matched_bottle_id ${id} is not a bottle of this user; dropping it`);
     return null;
   }
   return id;
 }
 
-async function ingestScanResponse(path) {
-  const text = await readFile(path, 'utf8');
+async function completeScan(claimed, text) {
   const parsed = parseScanResponse(text);
-  const requestId = resolveRequestId(path, 'scan', parsed.frontmatter.request_id);
 
-  // scan_responses doesn't have a `details` column yet — pack details into
-  // `extracted` for add intents, into `match_candidates` slot? No — cleaner:
-  // merge extracted+details into extracted for add (frontend will split them
-  // back out), or store details under extracted.details. Use the latter.
+  // scan_responses has no `details` column: details ride along inside
+  // `extracted` (as extracted.details) and the frontend splits them back out.
   let extracted = parsed.extracted;
   if (parsed.details) {
     extracted = { ...(extracted || {}), details: parsed.details };
   }
 
   // matched_bottle_id is a uuid column with an FK to bottles, and its value
-  // comes straight out of the agent's JSON. A model that invents a plausible id
-  // (or emits a non-uuid string) fails the insert on the cast or the FK and
-  // takes `extracted` and `narrative` down with it — fields that were probably
-  // fine — then burns two sweep retries producing the same bad output.
-  //
-  // Verify it instead, and drop just that field when it doesn't hold up. A null
-  // matched_bottle_id is the ordinary "no match found" answer the client
-  // already renders. Scoped to the requester for the same reason as everything
-  // else in this file that reads with the service key.
-  const matchedBottleId = await verifyMatchedBottle(
-    parsed.matched_bottle_id, requestId);
+  // comes straight out of the model's JSON. A model that invents a plausible id
+  // (or emits a non-uuid string) would fail the insert on the cast or the FK
+  // and take `extracted` and `narrative` down with it — fields that were
+  // probably fine. Verify it instead, and drop just that field when it doesn't
+  // hold up. A null matched_bottle_id is the ordinary "no match found" answer
+  // the client already renders.
+  const matchedBottleId = await verifyMatchedBottle(parsed.matched_bottle_id, claimed);
 
   const { error: insErr } = await sb.from('scan_responses').insert({
-    request_id: requestId,
+    request_id: claimed.id,
     extracted,
     matched_bottle_id: matchedBottleId,
     match_candidates: parsed.match_candidates,
     narrative: parsed.narrative,
   });
   if (insErr && !isDuplicateKey(insErr)) throw insErr;
-  if (insErr) log(`scan ${requestId}: response already stored; finishing ingest`);
+  if (insErr) log(`scan ${claimed.id}: response already stored; finishing`);
 
   const { error: updErr } = await sb.from('scan_requests')
     .update({ status: 'completed' })
-    .eq('id', requestId);
+    .eq('id', claimed.id);
   if (updErr) throw updErr;
-
-  await archive(`scan-${requestId}.md`, path);
-
-  // Clean up local image (Storage holds the durable copy).
-  try {
-    const dir = await import('node:fs/promises').then((m) => m.readdir(CONFIG.dirs.images));
-    for (const f of dir) {
-      if (f.startsWith(requestId)) await unlink(join(CONFIG.dirs.images, f));
-    }
-  } catch { /* best-effort */ }
-
-  log(`completed scan ${requestId}`);
-}
-
-async function archive(reqFileName, responsePath) {
-  const reqPath = join(CONFIG.dirs.requests, reqFileName);
-  try { await rename(reqPath, join(CONFIG.dirs.processed, reqFileName)); } catch { /* request file may already be moved */ }
-  try { await rename(responsePath, join(CONFIG.dirs.processed, basename(responsePath))); } catch { /* same */ }
+  log(`completed scan ${claimed.id}`);
 }
 
 // ───────────────────────── stale-claim sweep ─────────────────────────
@@ -766,24 +729,23 @@ async function shutdown(signal) {
     try { await ch.unsubscribe(); } catch (e) { err('unsubscribe:', e?.message || e); }
   }
   channels.clear();
-  if (responsesWatcher) {
-    try { await responsesWatcher.close(); } catch (e) { err('chokidar close:', e?.message || e); }
-  }
+  // Calls still in flight are abandoned: their rows stay 'picked_up' and the
+  // stale-claim sweep returns them to 'pending' after the next start.
   log('shutdown complete');
   process.exit(0);
 }
 process.on('SIGINT',  () => { shutdown('SIGINT').catch(()  => process.exit(1)); });
 process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)); });
 
-// Fail-fast on unhandled rejections / uncaught exceptions / fatal chokidar
-// errors. These reflect bugs (or filesystem disappearance), not transient
-// network drops — continuing in a corrupted state is worse than dying.
+// Fail-fast on unhandled rejections / uncaught exceptions. These reflect bugs,
+// not transient network drops — continuing in a corrupted state is worse than
+// dying.
 //
-// BUT: the watcher runs as a detached node.exe with no supervisor, so a
-// silent exit would leave it dead until the owner notices (which happened
-// on 2026-05-01 — a real morning request stuck in pending). Email via the
-// existing notify() SMTP path before exiting so the owner finds out at the
-// moment of death rather than when they next try to use the app.
+// Email via the existing notify() SMTP path before exiting so the owner finds
+// out at the moment of death rather than when they next try to use the app.
+// That mattered most when the watcher ran with no supervisor (2026-05-01: a
+// real morning request stuck in pending). Under systemd the unit restarts it,
+// and the notify cooldown keeps a crash loop from flooding the inbox.
 async function fatalAndExit(reason, body) {
   err(`FATAL ${reason}:`, body);
   // Race the email against a 5-second timeout — don't let a hung SMTP

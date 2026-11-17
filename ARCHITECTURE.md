@@ -2,7 +2,7 @@
 
 ```
 ┌──────────────┐                                                ┌────────────────┐
-│  PHONE       │                                                │  LAPTOP        │
+│  PHONE       │                                                │  WATCHER HOST  │
 │ (Safari /    │                                                │ (always-on)    │
 │  PWA)        │                                                │                │
 │              │       ① INSERT pairing_request                 │                │
@@ -24,24 +24,13 @@
                                      │    │              │      │ │  watcher   │ │
                                      │    │              │      │ │  (Node)    │ │
                                      │    │              │      │ └─────┬──────┘ │
-                                     │    │              │      │       │ writes │
-                                     │    │              │      │       ▼ md     │
-                                     │    │              │      │ ~/cellar27-    │
-                                     │    │              │      │   bridge/      │
-                                     │    │              │      │   requests/    │
-                                     │    │              │      │       │        │
-                                     │    │              │      │       ▼ spawn  │
-                                     │    │              │      │ ┌────────────┐ │
-                                     │    │              │      │ │ claude     │ │
-                                     │    │              │      │ │ --print    │ │
-                                     │    │              │      │ └─────┬──────┘ │
-                                     │    │              │      │       │ writes │
-                                     │    │              │      │       ▼ md     │
-                                     │    │              │      │ ~/cellar27-    │
-                                     │    │              │      │   bridge/      │
-                                     │    │              │      │   responses/   │
-                                     │    │              │      │       │        │
-                                     │    │              │      │       │ chokidar
+                                     │    │              │      │       │ ③      │
+                                     │    │              │      │       ▼ HTTPS  │
+                                     │    │              │      │ api.anthropic  │
+                                     │    │              │      │ .com: one call │
+                                     │    │              │      │ (Messages API, │
+                                     │    │              │      │ no tools)      │
+                                     │    │              │      │       │ reply  │
                                      │    │              │      │       ▼        │
                                      │    │              │ ◀──── ④ INSERT        │
                                      │    │              │      │   pairing_     │
@@ -59,8 +48,8 @@
 |---|-----------|--------------------------------------------------------------------------|
 | ① | Phone     | Frontend (`docs/js/pairings.js`) inserts a `pairing_request` row, with a `cellar_snapshot` and `context`. Anon key + RLS confines it to your `user_id`. The two planned-flight types are the exception — see "Planned-flight requests" below. |
 | ② | Supabase  | Realtime publication fires an `INSERT` event for the new row.            |
-| ③ | Laptop    | `watcher` (Node, `watcher/src/index.js`) is subscribed to that event. It runs the policy gate (allowlist + rate limit), atomically claims the row (`status: pending → picked_up`), renders the request to a markdown file in `requests/`, then `spawn`s `claude --print` with a one-shot prompt pointing at that file. Claude reads it, reasons, writes a response markdown file at the path the request specified (in `responses/`). |
-| ④ | Laptop    | `chokidar` notices the new file. Watcher parses it, inserts a `pairing_response` row, marks the request `completed`, archives both files into `processed/`. |
+| ③ | Watcher   | `watcher` (Node, `watcher/src/index.js`) is subscribed to that event. It runs the policy gate (allowlist + rate limit), atomically claims the row (`status: pending → picked_up`), renders the request to a markdown prompt, and makes one Claude Messages API call with it (`watcher/src/claude.js`; no tools). The reply comes back as markdown sections. |
+| ④ | Watcher   | Watcher parses the reply, inserts a `pairing_response` row and marks the request `completed`. A failed call marks it `error` with a message the app shows. |
 | ⑤ | Phone     | Realtime delivers the new response row to the subscribed phone. Frontend renders the bottle cards + narrative. |
 
 ## Data ownership
@@ -68,16 +57,18 @@
 | Lives in              | What                                                                |
 |-----------------------|---------------------------------------------------------------------|
 | **Supabase**          | Bottles, pairing/scan requests + responses, label photos (Storage)  |
-| **Laptop disk**       | Bridge folder (`~/cellar27-bridge/`) — ephemeral request/response files for audit; Storage holds the durable image copies |
+| **Watcher host**      | Nothing but `watcher/.env` and logs. Prompts, replies and label photos stay in memory for the length of one call; Storage holds the photos |
+| **Anthropic**         | Each prompt and reply, under the API's data retention terms        |
 | **Phone**             | Nothing persistent. Service worker caches the app shell; data is fetched fresh from Supabase on each visit |
 
 ## Liveness model
 
-The laptop only needs to be awake during step ③ (the AI reasoning window — typically 20–60s).
+The watcher host only needs to be up during step ③ (the API call, typically 20–60s).
 
 - Phone goes offline mid-flight → catches the response on next reconnect (Realtime + a one-shot row check on subscribe).
-- Laptop goes to sleep AFTER the response was written → no impact; phone reads from Supabase.
-- Laptop is asleep when the phone submits → request sits in `pending`. When laptop wakes, watcher's startup sweep picks it up and processes it. Phone gets the response when it lands.
+- Watcher goes down AFTER the response was recorded → no impact; phone reads from Supabase.
+- Watcher goes down DURING a call → the row stays `picked_up` and `cellar27_sweep_stale_claims` returns it to `pending` after `TIMEOUT_MINUTES` (that call is spent).
+- Watcher is down when the phone submits → request sits in `pending`. The startup sweep picks it up when the watcher comes back. Phone gets the response when it lands.
 
 ## Security shape
 
@@ -86,8 +77,8 @@ The laptop only needs to be awake during step ③ (the AI reasoning window — t
 - **DB-enforced allowlist.** Only user_ids listed in `cellar27_allowed_users` can INSERT into `pairing_requests` / `scan_requests` (RLS `WITH CHECK`). Watcher's `ALLOWED_USER_IDS` env stays as a redundant backstop.
 - **DB-enforced rate limit.** `cellar27_check_rate_limit(auth.uid())` in the same RLS check rejects any insert past 100 combined pairing+scan rows in the last 60 min (raised from 20 in `0005_security_tune.sql`).
 - **Concurrent in-flight cap.** `enforce_pending_request_cap` / `enforce_pending_scan_cap` triggers reject a 6th in-flight (`pending` + `picked_up`) row per user.
-- **Global daily Claude ceiling.** Watcher calls `cellar27_try_record_spawn(MAX_CLAUDE_CALLS_PER_DAY)` before every `claude --print` spawn; default 250/day across all users, atomic counter in `cellar27_watcher_metrics`. Resets at UTC midnight.
-- **Contained agent.** The spawned Claude runs with `--tools Read,Write` and `cwd` = the bridge dir, so request text — which can come from an anonymous share-link guest — reaches a session with no shell, no network, and no reach outside the bridge folder. See Layer 9 in `docs/SECURITY.md`.
+- **Global daily Claude ceiling.** Watcher calls `cellar27_try_record_spawn(MAX_CLAUDE_CALLS_PER_DAY)` before every Claude API call; default 250/day across all users, atomic counter in `cellar27_watcher_metrics`. Resets at UTC midnight.
+- **No tools on the model.** Each request is one Messages API call with no `tools`, so request text — which can come from an anonymous share-link guest — reaches a model that can only answer in text: nothing to read, run or call out to. See Layer 9 in `docs/SECURITY.md`.
 - **Stale-claim recovery.** `cellar27_sweep_stale_claims` resets timed-out `picked_up` rows to `pending` (up to 2 retries) before marking them `error`.
 - **Size CHECK constraints** on user-supplied jsonb (`context` ≤ 4 KB, `cellar_snapshot` ≤ 65 KB, `image_paths` ≤ 4 KB) so a runaway phone payload can't bloat a row.
 
@@ -116,7 +107,7 @@ This is deliberate, not an optimization. Sending the flight inline (picks + somm
 Same flow with two extras:
 
 - **Front and optional back** label photos uploaded to Supabase Storage from the phone before the request inserts (path stored as an array in `image_paths`).
-- **Watcher downloads** the images to `~/cellar27-bridge/images/`, references those local paths in the markdown so Claude can read them with vision.
+- **Watcher downloads** the images from Storage (owner-scoped) and attaches them to the API call as image blocks, each after a line naming it (front / back). They are never written to the watcher's disk.
 - Response includes both **structured fields** (producer, varietal, vintage…) and **enrichment** (tasting notes, food pairings, producer background, serving recs), all packed into `scan_responses.extracted`.
 
 ## What about share / QR?

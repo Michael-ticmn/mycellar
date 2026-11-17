@@ -13,8 +13,8 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.9.0",
     "@supabase/supabase-js": "^2.111.0",
-    "chokidar": "^3.6.0",
     "dotenv": "^16.4.5",
     "nodemailer": "^9.0.3"
   }

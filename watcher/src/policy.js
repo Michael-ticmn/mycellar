@@ -1,5 +1,5 @@
 // Allowlist + per-user rate limit. Both gate the cost-bearing step
-// (spawning `claude --print`). Defense-in-depth: the DB-layer trigger
+// (the Claude API call). Defense-in-depth: the DB-layer trigger
 // already caps pending requests at 5; this is the extra barrier in
 // case sign-ups accidentally get re-enabled or an account is compromised.
 
