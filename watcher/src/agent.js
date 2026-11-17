@@ -36,13 +36,10 @@ function filteredEnv() {
   return out;
 }
 
-// Resolve CONFIG.claudeBin to an absolute path. On Windows, npm-installed
-// CLIs are .cmd shims (e.g. claude.cmd); spawning by bare name without
-// shell:true fails. We previously worked around this by passing
-// shell:true, but Node's DEP0190 deprecates that combo (shell-injection
-// risk on the concatenated arg string). Resolve the .cmd path explicitly
-// once, then spawn it directly with shell:false. No string concat = no
-// deprecation, no escaping concerns.
+// Resolve CONFIG.claudeBin to an absolute path, honoring PATHEXT on Windows.
+// The extension of the result decides whether spawn needs a shell: the native
+// installer gives claude.exe (spawned directly), npm gives a claude.cmd shim
+// (needs cmd.exe). See the spawn call below.
 let _resolvedBin = null;
 function resolveBin() {
   if (_resolvedBin) return _resolvedBin;
@@ -144,20 +141,21 @@ Read that file. It contains frontmatter (with a respond_to path you must write t
 
   const bin = resolveBin();
   log(`spawning ${bin} for ${requestFilePath}`);
-  // Why shell:true on Windows despite DEP0190:
+  // Shell only for a .cmd / .bat shim:
   //   Node 24 refuses to spawn .cmd / .bat files directly (CVE-2024-27980
-  //   hardening) — without shell:true the call fails with EINVAL. npm
-  //   installs the `claude` CLI as a .cmd shim on Windows, so we have to
-  //   route through cmd.exe.
+  //   hardening) — without shell:true the call fails with EINVAL. That bit
+  //   us on 2026-05-01, when `claude` was npm's .cmd shim and shell:true was
+  //   dropped for every binary. A native claude.exe spawns fine without one.
   //   DEP0190 warns because shell:true with args concatenates them into
   //   the shell command line without escaping, which is a shell-injection
   //   risk *if any arg comes from user input*. In our case `args` is the
-  //   four hard-coded strings below (no dynamic content reaches it ever),
-  //   so the deprecation's reasoning doesn't apply. The warning is noise
-  //   for our usage pattern.
+  //   four hard-coded strings above (no dynamic content reaches it ever),
+  //   so on the shim path the warning is noise. On the .exe path there is
+  //   no shell and no warning.
+  const needsShell = /\.(cmd|bat)$/i.test(bin);
   const proc = spawn(bin, args, {
     cwd: CONFIG.bridgeDir,
-    shell: process.platform === 'win32',
+    shell: needsShell,
     stdio: ['pipe', 'pipe', 'pipe'],
     env: filteredEnv(),
   });
@@ -171,8 +169,8 @@ Read that file. It contains frontmatter (with a respond_to path you must write t
 
   const killTimer = setTimeout(() => {
     err(`timeout after ${Math.round(AGENT_TIMEOUT_MS / 60_000)} min; killing agent for ${requestFilePath}`);
-    // SIGKILL rather than SIGTERM: on Windows this goes through cmd.exe (see
-    // shell:true above) and a polite signal doesn't reliably reach the child.
+    // SIGKILL rather than SIGTERM: with a .cmd shim this goes through cmd.exe
+    // (see needsShell above) and a polite signal doesn't reliably reach the child.
     try { proc.kill('SIGKILL'); } catch (e) { err(`kill failed: ${e.message}`); }
   }, AGENT_TIMEOUT_MS);
 

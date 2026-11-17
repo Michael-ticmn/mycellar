@@ -6,15 +6,17 @@ Node service that bridges Supabase Realtime ↔ a file-drop folder that Claude C
 
 A background `node.exe` process on Windows — no PM2, no Windows service. Logs go to `watcher/watcher.out.log` and `watcher/watcher.err.log` (gitignored).
 
-Started at logon by the **`cellar27-watcher`** Scheduled Task (added 2026-09-19, after a reboot left it down for four days). The task runs [`start-watcher.ps1`](start-watcher.ps1), which skips starting if a watcher is already up, rotates the previous run's logs to `.bak` (keeping the last 10), then runs node in the foreground so the task tracks it. Mirrors the existing `vault27-watcher` task: user `MRJ`, interactive logon, limited privileges, no execution time limit.
+Started at logon by the **`cellar27-watcher`** Scheduled Task (added 2026-09-19, after a reboot left it down for four days). The task runs [`start-watcher.ps1`](start-watcher.ps1), which skips starting if a watcher is already up, rotates the previous run's logs to `.bak` (keeping the last 10), then runs node in the foreground so the task tracks it. Mirrors the existing `vault27-watcher` task: runs as the owner's own account, interactive logon, limited privileges, no execution time limit.
 
 **It only starts at logon.** The task's "restart on failure" (3 attempts, 1 minute apart) does not cover the wrapper being killed after it launched. On 2026-09-20 the wrapper exited `0xC000013A` (killed from outside, cause unknown) and the watcher stayed down until a manual restart on 09-25, with requests going unanswered. A repeating trigger that re-runs the launcher was considered and declined (2026-09-26), so a dead watcher stays dead until the next logon or a manual start. If requests sit pending, check here first.
 
 ```powershell
 Get-ScheduledTask -TaskName 'cellar27-watcher'          # State: Running when healthy, Ready = watcher is down
 Start-ScheduledTask -TaskName 'cellar27-watcher'        # start it (preferred way to restart)
-Stop-ScheduledTask  -TaskName 'cellar27-watcher'        # stop it (also kills node)
+Stop-ScheduledTask  -TaskName 'cellar27-watcher'        # stops the wrapper only, NOT node
 ```
+
+`Stop-ScheduledTask` does not stop the watcher. On 2026-10-03 it ended the PowerShell wrapper and left node running, so the following `Start-ScheduledTask` hit the already-running guard and exited, and the old code stayed live. To restart onto new code, kill node by full path (recipe below), then `Start-ScheduledTask`.
 
 The guard matches this repo's `src\index.js` by **full path**. myvinyl and mycabinet also run watchers as `node src/index.js`, and the original relative match mistook either one for cellar27's (fixed 2026-09-26). Anything that finds or kills this watcher must match the full path too.
 
@@ -81,7 +83,7 @@ Folders under `BRIDGE_DIR` (`requests/`, `responses/`, `processed/`, `images/`) 
 
 By default (`AUTO_INVOKE=true` in `.env`), the watcher spawns a fresh `claude --print` session per request and pipes the prompt over stdin. The agent reads the request file, writes the response file at the path in `respond_to`, exits. No long-running session, no manual nudging. See [`src/agent.js`](src/agent.js).
 
-Flags used: `--print` (non-interactive), **`--tools Read,Write`** (see below), `--permission-mode acceptEdits` (auto-accept the response-file write), `--no-session-persistence` (don't accumulate session history). `cwd` is `BRIDGE_DIR`. `claude` resolves via PATH (override with `CLAUDE_BIN` in `.env`).
+Flags used: `--print` (non-interactive), **`--tools Read,Write`** (see below), `--permission-mode acceptEdits` (auto-accept the response-file write), `--no-session-persistence` (don't accumulate session history). `cwd` is `BRIDGE_DIR`. `claude` resolves via PATH (override with `CLAUDE_BIN` in `.env`). A native `claude.exe` is spawned directly. An npm `claude.cmd` shim goes through cmd.exe instead, because Node 24 refuses to spawn `.cmd` files directly (`EINVAL`), and that path logs a harmless DEP0190 warning to `watcher.err.log`.
 
 Note: do NOT pass `--bare`. It disables keychain reads, so the spawned `claude` would have no auth and fail with "Please run /login". Without `--bare`, `claude` uses the host user's existing OAuth session.
 
